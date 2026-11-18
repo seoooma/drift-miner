@@ -1,5 +1,5 @@
 extends CanvasLayer
-## 画面表示。燃料バー、資源、目標、方向ガイド、メッセージ、パーク選択、ゲームオーバー。
+## 画面表示。燃料バー、在庫、目標、建設バー、方向ガイド、メッセージ、パーク選択、ゲームオーバー、母艦。
 
 const SIGNAL_RANGE := 1300.0
 
@@ -18,6 +18,11 @@ var _perk_box: VBoxContainer
 var _over_panel: PanelContainer
 var _over_label: Label
 var _over_hint: Label
+var _build_bar: HBoxContainer
+var _build_buttons := {}
+var _ship_panel: PanelContainer
+var _ship_box: VBoxContainer
+var _backdrops: Array = []
 
 
 func _ready() -> void:
@@ -29,21 +34,23 @@ func _ready() -> void:
 	_overlay.draw.connect(_draw_overlay)
 	add_child(_overlay)
 
-	_info = _make_label(20, Vector2(20, 52))
-	_goal = _make_label(22, Vector2(20, 0))
+	_info = _make_label(19, Vector2(20, 52))
+
+	_goal = _make_label(22, Vector2.ZERO)
 	_goal.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 	_goal.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_goal.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_goal.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_goal.offset_bottom = -60
+	_goal.offset_bottom = -112
 	_goal.modulate = Color(1.0, 0.95, 0.7)
 
-	_help = _make_label(16, Vector2.ZERO)
-	_help.text = "WASD:移動  左クリック長押し:採掘  B:採掘機  E:ワープ"
-	_help.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	_help.offset_left = 20
-	_help.offset_top = -34
-	_help.modulate = Color(1, 1, 1, 0.6)
+	_help = _make_label(15, Vector2.ZERO)
+	_help.text = "WASD:移動  左クリック長押し:採掘  1〜6:建設  右クリック:取消  E:ワープ"
+	_help.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_help.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_help.offset_right = -16
+	_help.offset_top = 12
+	_help.modulate = Color(1, 1, 1, 0.55)
 
 	_toast = _make_label(24, Vector2.ZERO)
 	_toast.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
@@ -58,6 +65,23 @@ func _ready() -> void:
 	_banner.grow_vertical = Control.GROW_DIRECTION_BOTH
 	_banner.offset_top = -160
 
+	# 建設バー（画面下中央）
+	_build_bar = HBoxContainer.new()
+	_build_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	_build_bar.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_build_bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_build_bar.offset_bottom = -10
+	_build_bar.add_theme_constant_override("separation", 6)
+	add_child(_build_bar)
+	for b in GameState.BUILD_ORDER:
+		var btn := Button.new()
+		btn.custom_minimum_size = Vector2(118, 88)
+		btn.add_theme_font_size_override("font_size", 17)
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.pressed.connect(func(): main.toggle_placing(b))
+		_build_bar.add_child(btn)
+		_build_buttons[b] = btn
+
 	_perk_panel = _make_panel()
 	_perk_box = VBoxContainer.new()
 	_perk_box.add_theme_constant_override("separation", 10)
@@ -69,19 +93,25 @@ func _ready() -> void:
 	_over_panel.add_child(over_box)
 	_over_label = Label.new()
 	_over_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_over_label.add_theme_font_size_override("font_size", 26)
+	_over_label.add_theme_font_size_override("font_size", 24)
 	over_box.add_child(_over_label)
-	var retry := Button.new()
-	retry.text = "もう一度遊ぶ"
-	retry.custom_minimum_size = Vector2(0, 72)
-	retry.add_theme_font_size_override("font_size", 24)
-	retry.pressed.connect(func(): main.restart())
-	over_box.add_child(retry)
+	var back := Button.new()
+	back.text = "母艦へ戻る"
+	back.custom_minimum_size = Vector2(0, 72)
+	back.add_theme_font_size_override("font_size", 24)
+	back.pressed.connect(func(): main.open_mothership())
+	over_box.add_child(back)
 	_over_hint = Label.new()
-	_over_hint.text = "（Rキーでもリスタート）"
+	_over_hint.text = "（Rキーでも戻れます）"
 	_over_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_over_hint.modulate = Color(1, 1, 1, 0.6)
 	over_box.add_child(_over_hint)
+
+	_ship_panel = _make_panel()
+	_ship_panel.custom_minimum_size = Vector2(900, 0)
+	_ship_box = VBoxContainer.new()
+	_ship_box.add_theme_constant_override("separation", 8)
+	_ship_panel.add_child(_ship_box)
 
 
 func _make_label(font_size: int, pos: Vector2) -> Label:
@@ -96,6 +126,12 @@ func _make_label(font_size: int, pos: Vector2) -> Label:
 
 
 func _make_panel() -> PanelContainer:
+	var back := ColorRect.new()
+	back.color = Color(0.0, 0.01, 0.04, 0.7)
+	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	back.visible = false
+	add_child(back)
 	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -104,6 +140,7 @@ func _make_panel() -> PanelContainer:
 	panel.custom_minimum_size = Vector2(520, 0)
 	center.add_child(panel)
 	panel.visible = false
+	_backdrops.append([back, panel])
 	return panel
 
 
@@ -111,21 +148,46 @@ func _touch() -> bool:
 	return main != null and main.touch.active
 
 
+func _any_panel() -> bool:
+	return _perk_panel.visible or _over_panel.visible or _ship_panel.visible
+
+
+## 画面座標が UI（建設バーやパネル）の上か。
+func is_over_ui(screen_pos: Vector2) -> bool:
+	if _any_panel():
+		return true
+	return _build_bar.visible and _build_bar.get_global_rect().grow(6.0).has_point(screen_pos)
+
+
+func pointer_over_ui() -> bool:
+	return is_over_ui(_overlay.get_viewport().get_mouse_position())
+
+
 func _process(delta: float) -> void:
+	for pair in _backdrops:
+		pair[0].visible = pair[1].visible
 	var gs := GameState
 	var info: Dictionary = SectorGenerator.TYPES[gs.sector_type]
+	var raw: PackedStringArray = []
+	for k in gs.RAW_ITEMS:
+		raw.append("%s %d" % [gs.ITEMS[k]["short"], gs.count(k)])
+	var made: PackedStringArray = []
+	for k in gs.MADE_ITEMS:
+		made.append("%s %d" % [gs.ITEMS[k]["short"], gs.count(k)])
 	var lines: PackedStringArray = [
 		"セクター %d/%d  %s" % [gs.sector, gs.FINAL_SECTOR, info["name"]],
-		"鉄 %d   結晶 %d" % [int(gs.res["iron"]), int(gs.res["crystal"])],
-		"採掘機：%s" % gs.cost_text(gs.miner_cost()),
+		"  ".join(raw),
+		"  ".join(made),
 		"ワープ：%s" % gs.cost_text(gs.warp_cost()),
 	]
 	_info.text = "\n".join(lines)
-	_goal.text = _goal_text()
+	_goal.text = main.next_step() if main != null and gs.alive and not _any_panel() else ""
+	_build_bar.visible = gs.alive and not _any_panel()
+	_update_build_bar()
 
 	if _touch():
-		_help.text = "左：スティックで移動　右：押して採掘"
-		_info.add_theme_font_size_override("font_size", 26)
+		_help.text = "左：移動　右：押して採掘　下：建設"
+		_info.add_theme_font_size_override("font_size", 22)
 
 	if _toast_time > 0.0:
 		_toast_time -= delta
@@ -136,27 +198,31 @@ func _process(delta: float) -> void:
 	_overlay.queue_redraw()
 
 
-func _goal_text() -> String:
-	if not GameState.alive or main == null:
-		return ""
-	var any_found := false
-	for g in main.gates:
-		if g.discovered:
-			any_found = true
-	var need := GameState.warp_cost()
-	if not GameState.can_afford(need):
-		var miss: PackedStringArray = []
-		for k in need:
-			var lack := int(need[k]) - int(GameState.res[k])
-			if lack > 0:
-				miss.append("%s あと%d" % [GameState.RES_NAMES[k], lack])
-		var s := "ワープ費用を集める（%s）" % "・".join(miss)
-		if not any_found:
-			s += "／ゲートを探す"
-		return s
-	if not any_found:
-		return "ゲートを探す（外側へ）"
-	return "ゲートへ向かってワープ！"
+func _update_build_bar() -> void:
+	if main == null:
+		return
+	for b in GameState.BUILD_ORDER:
+		var btn: Button = _build_buttons[b]
+		var def: Dictionary = GameState.BUILDINGS[b]
+		var unlocked := GameState.building_unlocked(b)
+		btn.visible = unlocked or b == "quantum"
+		var kits := GameState.kit_count(b)
+		var sub := ""
+		if not unlocked:
+			sub = "未研究"
+		elif kits > 0:
+			sub = "キット×%d" % kits
+		else:
+			var parts: PackedStringArray = []
+			var cost: Dictionary = def["cost"]
+			for k in cost:
+				parts.append("%s%d" % [GameState.ITEMS[k]["short"], int(cost[k])])
+			sub = " ".join(parts)
+		btn.text = "%s\n%s" % [def["name"], sub]
+		var can: bool = main.can_start_placing(b)
+		btn.modulate = Color(1, 1, 1, 1.0 if can else 0.45)
+		if main.placing == b:
+			btn.modulate = Color(1.0, 0.9, 0.4)
 
 
 func toast(text: String, duration: float = 2.5) -> void:
@@ -281,14 +347,14 @@ func _clear_messages() -> void:
 	_toast.modulate.a = 0.0
 
 
-func show_perk_choice(options: Array, salvage: int) -> void:
+func show_perk_choice(options: Array, packed: int) -> void:
 	_clear_messages()
 	for c in _perk_box.get_children():
 		c.queue_free()
 	var title := Label.new()
 	title.text = "ワープ成功！強化を1つ選んでください"
-	if salvage > 0:
-		title.text += "\n（置いていく採掘機を撤収：鉄 +%d）" % salvage
+	if packed > 0:
+		title.text += "\n（建物 %d 個を畳んで積み込みました）" % packed
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 24)
 	_perk_box.add_child(title)
@@ -319,16 +385,72 @@ func show_game_over(reason: String, victory: bool) -> void:
 	var s := gs.score(victory)
 	var head := "帰還成功！" if victory else "ゲームオーバー：%s" % reason
 	var best := "自己ベスト更新！" if s >= gs.best_score else "自己ベスト %d" % gs.best_score
-	_over_label.text = "%s\n到達セクター %d / %d\nスコア %d\n%s" % [head, gs.sector, gs.FINAL_SECTOR, s, best]
+	var made := "鉄板 %d・銅線 %d・回路 %d・量子コア %d" % [
+		int(gs.produced.get("plate", 0.0)), int(gs.produced.get("wire", 0.0)),
+		int(gs.produced.get("circuit", 0.0)), int(gs.produced.get("qcore", 0.0))]
+	_over_label.text = "%s\n到達セクター %d / %d　スコア %d（%s）\n生産：%s\n研究データ +%d（合計 %d）" % [
+		head, gs.sector, gs.FINAL_SECTOR, s, best, made, gs.last_data_gain, gs.data_points]
 	_over_hint.visible = not _touch()
 	_over_panel.visible = true
+
+
+func show_mothership() -> void:
+	_clear_messages()
+	_perk_panel.visible = false
+	_over_panel.visible = false
+	for c in _ship_box.get_children():
+		c.queue_free()
+	var gs := GameState
+	var title := Label.new()
+	title.text = "母艦　研究データ %d" % gs.data_points
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 28)
+	_ship_box.add_child(title)
+	var sub := Label.new()
+	sub.text = "ランで得た研究データで技術を解放し、より奥のセクターを目指そう。最高到達 %d・自己ベスト %d" % [gs.best_sector, gs.best_score]
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub.add_theme_font_size_override("font_size", 16)
+	sub.modulate = Color(1, 1, 1, 0.7)
+	_ship_box.add_child(sub)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	_ship_box.add_child(grid)
+	for r in gs.RESEARCH:
+		var b := Button.new()
+		var id := String(r["id"])
+		var owned := gs.has_research(id)
+		var tag := "解放済み" if owned else "データ %d" % int(r["cost"])
+		b.text = "%s（%s）\n%s" % [r["name"], tag, r["desc"]]
+		b.custom_minimum_size = Vector2(292, 64)
+		b.add_theme_font_size_override("font_size", 15)
+		b.clip_text = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.disabled = owned or gs.data_points < int(r["cost"])
+		if owned:
+			b.modulate = Color(0.6, 1.0, 0.7)
+		b.pressed.connect(func():
+			if gs.buy_research(id):
+				show_mothership())
+		grid.add_child(b)
+	var go := Button.new()
+	go.text = "出撃する"
+	go.custom_minimum_size = Vector2(0, 68)
+	go.add_theme_font_size_override("font_size", 26)
+	go.focus_mode = Control.FOCUS_NONE
+	go.pressed.connect(func(): main.launch_run())
+	_ship_box.add_child(go)
+	_ship_panel.visible = true
 
 
 func hide_panels() -> void:
 	_perk_panel.visible = false
 	_over_panel.visible = false
+	_ship_panel.visible = false
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _over_panel.visible and event is InputEventKey and event.pressed and event.physical_keycode == KEY_R:
-		main.restart()
+		main.open_mothership()

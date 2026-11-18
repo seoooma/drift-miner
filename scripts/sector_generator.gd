@@ -7,12 +7,13 @@ extends RefCounted
 const TYPES := {
 	"standard": {"name": "標準宙域", "desc": "", "tint": Color(1, 1, 1)},
 	"ice_field": {"name": "氷原", "desc": "氷が多く、結晶が少ない", "tint": Color(0.6, 0.85, 1.0)},
+	"copper": {"name": "銅鉱脈", "desc": "銅鉱石が豊富", "tint": Color(1.0, 0.65, 0.4)},
 	"nebula": {"name": "結晶星雲", "desc": "結晶が豊富。ただし視界が狭い", "tint": Color(0.9, 0.55, 1.0)},
 	"sparse": {"name": "疎空域", "desc": "小惑星は少ないが大きい", "tint": Color(1.0, 0.9, 0.6)},
 	"ring": {"name": "小惑星リング", "desc": "資源が環状に集まる", "tint": Color(0.7, 1.0, 0.7)},
 	"radiation": {"name": "放射線帯", "desc": "放射線域が多い。結晶2倍", "tint": Color(1.0, 0.5, 0.45)},
 }
-const SAFE_TYPES := ["standard", "ice_field", "sparse", "ring"]
+const SAFE_TYPES := ["standard", "ice_field", "sparse", "ring", "copper"]
 const RICH_TYPES := ["nebula", "radiation", "ring", "sparse"]
 
 
@@ -33,6 +34,7 @@ static func generate(seed_value: int, sector: int, sector_type: String, world_ra
 	var radius_mult := 1.0
 	var ice_mult := 1.0
 	var crystal_mult := 1.0
+	var copper_mult := 1.0
 	var zone_count := 0 if sector <= 1 else rng.randi_range(1, 2)
 	match sector_type:
 		"ice_field":
@@ -40,6 +42,8 @@ static func generate(seed_value: int, sector: int, sector_type: String, world_ra
 			crystal_mult = 0.5
 		"nebula":
 			crystal_mult = 3.0
+		"copper":
+			copper_mult = 1.8
 		"sparse":
 			count_mult = 0.45
 			radius_mult = 1.5
@@ -49,7 +53,8 @@ static func generate(seed_value: int, sector: int, sector_type: String, world_ra
 
 	# 後半ほど氷（燃料）が乏しくなる
 	var ice_chance := maxf(0.08, 0.22 - 0.012 * sector) * ice_mult
-	var target_count := int(75.0 * count_mult)
+	var copper_chance := 0.3 * copper_mult
+	var target_count := int(80.0 * count_mult)
 
 	var asteroids: Array = []
 	var attempts := 0
@@ -81,6 +86,8 @@ static func generate(seed_value: int, sector: int, sector_type: String, world_ra
 			kind = "crystal"
 		elif roll < crystal_chance + ice_chance:
 			kind = "ice"
+		elif roll < crystal_chance + ice_chance + copper_chance:
+			kind = "copper"
 
 		var amount := radius * rng.randf_range(1.4, 2.4)
 		if kind == "crystal":

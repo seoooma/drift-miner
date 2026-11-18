@@ -1,7 +1,7 @@
 extends CanvasLayer
 ## スマホ用のタッチ操作。
 ## 画面左側：バーチャルスティックで移動。右側：押した場所の近くの小惑星を採掘（吸い付き照準）。
-## 右端のボタン：採掘機の設置とワープ。使えないときは半透明、使えるときは光る。
+## 右端のボタン：ワープ。建設モード中は、タップした場所に建物を置く。使えないときは半透明、使えるときは光る。
 ## タッチが一度でも検出されると有効になり、以後プレイヤーはマウスの代わりにこちらを読む。
 
 const STICK_RADIUS := 80.0
@@ -26,8 +26,7 @@ func _ready() -> void:
 	_draw_node = Node2D.new()
 	add_child(_draw_node)
 	_draw_node.draw.connect(_on_draw)
-	_buttons["miner"] = _make_button("採掘機", -110.0)
-	_buttons["warp"] = _make_button("ワープ", 20.0)
+	_buttons["warp"] = _make_button("ワープ", -50.0)
 	_set_visible(active)
 
 
@@ -72,7 +71,13 @@ func _input(event: InputEvent) -> void:
 					_press_button(id, b)
 					get_viewport().set_input_as_handled()
 					return
+			if main != null and main.hud.is_over_ui(event.position):
+				return
 			var w := get_viewport().get_visible_rect().size.x
+			if main != null and main.placing != "" and event.position.x >= w * STICK_AREA:
+				main.try_place_at(get_viewport().get_canvas_transform().affine_inverse() * event.position)
+				get_viewport().set_input_as_handled()
+				return
 			if event.position.x < w * STICK_AREA and _stick_index == -1:
 				_stick_index = event.index
 				_stick_origin = event.position
@@ -117,8 +122,6 @@ func _press_button(id: String, b: Label) -> void:
 	if main == null:
 		return
 	match id:
-		"miner":
-			main.try_place_miner_nearest()
 		"warp":
 			main.try_warp()
 
@@ -131,9 +134,7 @@ func _process(_delta: float) -> void:
 	if not active or main == null:
 		return
 	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.008)
-	var can_miner: bool = GameState.can_afford(GameState.miner_cost()) and main.nearest_free_asteroid() != null
 	var can_warp: bool = main.gate_in_range() != null and GameState.can_afford(GameState.warp_cost())
-	_style(_buttons["miner"], can_miner, Color(1.0, 0.85, 0.3), 0.0)
 	_style(_buttons["warp"], can_warp, Color(0.3, 1.0, 0.6), pulse)
 	_draw_node.queue_redraw()
 
