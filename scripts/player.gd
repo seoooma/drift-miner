@@ -65,7 +65,7 @@ func _process(delta: float) -> void:
 		_particles.emitting = false
 		return
 	var use_touch: bool = touch != null and touch.active
-	camera.zoom = Vector2(0.8, 0.8) if use_touch else Vector2.ONE
+	camera.zoom = Vector2(0.75, 0.75) if use_touch else Vector2.ONE
 
 	var input := Vector2.ZERO
 	if Input.is_physical_key_pressed(KEY_W):

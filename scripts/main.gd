@@ -74,8 +74,25 @@ func _ready() -> void:
 	add_child(hud)
 
 	GameState.run_over.connect(_on_run_over)
+	if touch.active:
+		get_tree().root.size_changed.connect(_apply_mobile_scale)
+		_apply_mobile_scale()
 	build_sector()
 	open_mothership()
+
+
+## スマホでは画面の短い辺を 450 として扱い、文字とボタンを大きく表示する。
+## 縦持ち・横持ちのどちらでも、長い辺は画面比に合わせて広がる。
+func _apply_mobile_scale() -> void:
+	var win := get_window()
+	var s := DisplayServer.window_get_size()
+	if s.x <= 0 or s.y <= 0:
+		return
+	var short_side := 450
+	if s.y > s.x:
+		win.content_scale_size = Vector2i(short_side, int(short_side * float(s.y) / s.x))
+	else:
+		win.content_scale_size = Vector2i(int(short_side * float(s.x) / s.y), short_side)
 
 
 # ---------------------------------------------------------------- 母艦とラン
