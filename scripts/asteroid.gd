@@ -2,8 +2,10 @@ class_name Asteroid
 extends Node2D
 ## 採掘できる小惑星。形はシードからランダム生成した多角形。
 
+signal depleted(asteroid: Asteroid)
+
 const COLORS := {
-	"iron": Color(0.75, 0.58, 0.45),
+	"iron": Color(0.85, 0.62, 0.45),
 	"ice": Color(0.55, 0.85, 1.0),
 	"crystal": Color(0.9, 0.45, 1.0),
 }
@@ -15,6 +17,7 @@ var max_amount: float = 50.0
 var discovered: bool = false
 var has_miner: bool = false
 var _points := PackedVector2Array()
+var _shake: float = 0.0
 
 
 func setup(data: Dictionary) -> void:
@@ -33,14 +36,21 @@ func setup(data: Dictionary) -> void:
 	visible = false
 
 
+func color() -> Color:
+	return COLORS[kind]
+
+
 ## 最大 want だけ掘り出し、実際に掘れた量を返す。枯渇したら消える。
-func extract(want: float) -> float:
+func extract(want: float, hit: bool = false) -> float:
 	if amount <= 0.0:
 		return 0.0
 	var got := minf(want, amount)
 	amount -= got
+	if hit:
+		_shake = 0.12
 	queue_redraw()
 	if amount <= 0.0:
+		depleted.emit(self)
 		queue_free()
 	return got
 
@@ -49,8 +59,17 @@ func is_alive() -> bool:
 	return amount > 0.0 and not is_queued_for_deletion()
 
 
+func _process(delta: float) -> void:
+	if _shake > 0.0:
+		_shake -= delta
+		var s := 1.0 + 0.05 * sin(Time.get_ticks_msec() * 0.06)
+		scale = Vector2(s, s)
+		if _shake <= 0.0:
+			scale = Vector2.ONE
+
+
 func _draw() -> void:
-	var c: Color = COLORS[kind]
+	var c := color()
 	draw_colored_polygon(_points, c.darkened(0.6))
 	var outline := _points.duplicate()
 	outline.append(_points[0])
