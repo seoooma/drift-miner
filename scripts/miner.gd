@@ -7,7 +7,9 @@ extends Node2D
 const BASE_RATE := 1.5
 const BASE_STORAGE := 20.0
 
+var btype: String = "miner"
 var asteroid: Asteroid = null
+var reserved: float = 0.0  # ドローンが取りに向かっている量
 var kind: String = "iron"
 var stored: float = 0.0
 var _spin: float = 0.0

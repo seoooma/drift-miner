@@ -4,7 +4,6 @@ extends Node2D
 
 signal impacted(meteor: Meteor)
 
-const WARN_TIME := 2.5
 const RADIUS := 110.0
 
 var _t: float = 0.0
@@ -13,7 +12,7 @@ var _done: bool = false
 
 func _process(delta: float) -> void:
 	_t += delta
-	if not _done and _t >= WARN_TIME:
+	if not _done and _t >= GameState.meteor_warning():
 		_done = true
 		impacted.emit(self)
 		queue_free()
@@ -21,7 +20,7 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	var k := clampf(_t / WARN_TIME, 0.0, 1.0)
+	var k := clampf(_t / GameState.meteor_warning(), 0.0, 1.0)
 	var blink := 0.5 + 0.5 * sin(_t * (8.0 + k * 20.0))
 	draw_circle(Vector2.ZERO, RADIUS, Color(1.0, 0.2, 0.15, 0.08 + 0.12 * blink))
 	draw_arc(Vector2.ZERO, RADIUS, 0.0, TAU, 48, Color(1.0, 0.3, 0.2, 0.8), 2.0)

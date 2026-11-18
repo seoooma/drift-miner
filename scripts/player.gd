@@ -92,10 +92,10 @@ func _process(delta: float) -> void:
 
 	# 照準：狙った位置の近くの小惑星に吸い付く（指で隠れないよう、照準は小惑星側に描く）
 	var aim := get_global_mouse_position()
-	var want_mine: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var want_mine: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and main.placing == "" and not main.hud.pointer_over_ui()
 	var slack := 12.0
 	if use_touch:
-		want_mine = touch.aiming
+		want_mine = touch.aiming and main.placing == ""
 		aim = touch.aim_world()
 		slack = 90.0 / camera.zoom.x
 	aim_target = main.lock_target(aim, slack) if (want_mine or not use_touch) else null
@@ -115,7 +115,7 @@ func _process(delta: float) -> void:
 		var kind := a.kind
 		var hit_pos := a.global_position
 		var got := a.extract(MINE_RATE * GameState.mine_mult * delta, true)
-		GameState.add_res(kind, got)
+		GameState.add_ore(kind, got)
 		_accumulate_popup(kind, got, hit_pos, col)
 		_particles.global_position = hit_pos + (global_position - hit_pos).normalized() * a.radius * 0.8
 		_particles.color = col
@@ -130,7 +130,9 @@ func _accumulate_popup(kind: String, got: float, pos: Vector2, col: Color) -> vo
 	var acc: float = float(_popup_acc.get(kind, 0.0)) + got
 	if acc >= 3.0:
 		var real := kind.trim_prefix("c_")
-		var label := "燃料" if real == "ice" else String(GameState.RES_NAMES[real])
+		var label := "燃料"
+		if real != "ice":
+			label = GameState.item_name(real if real == "crystal" else real + "_ore")
 		var shown := int(acc * 0.5 * GameState.ice_fuel_mult) if real == "ice" else int(acc)
 		Fx.popup(main.fx_layer, pos, "+%d %s" % [shown, label], col.lightened(0.3))
 		acc = 0.0
@@ -146,7 +148,7 @@ func _collect(delta: float) -> void:
 			continue
 		var got := miner.take(COLLECT_RATE * delta)
 		if got > 0.0:
-			GameState.add_res(miner.kind, got)
+			GameState.add_ore(miner.kind, got)
 			collecting.append(miner)
 			_accumulate_popup("c_" + miner.kind, got, miner.global_position, Asteroid.COLORS[miner.kind])
 
@@ -185,15 +187,6 @@ func _draw() -> void:
 			var w := 3.0 + sin(Time.get_ticks_msec() * 0.05) * 1.5
 			draw_line(Vector2(14, 0).rotated(0), end, Color(1.0, 0.4, 0.3, 0.9), w)
 			draw_circle(end, 6.0, Color(1.0, 0.7, 0.3, 0.8))
-	# タッチ時：「採掘機」ボタンで設置される先を予告
-	if touch != null and touch.active and GameState.alive:
-		var nf: Asteroid = main.nearest_free_asteroid()
-		if nf != null:
-			var c := to_local(nf.global_position)
-			var rr := nf.radius + 18.0
-			for i in 12:
-				var a0 := TAU * i / 12.0 + Time.get_ticks_msec() * 0.001
-				draw_arc(c, rr, a0, a0 + 0.25, 4, Color(1.0, 0.85, 0.3, 0.55), 2.0)
 	# 機体
 	var hull := PackedVector2Array([Vector2(18, 0), Vector2(-12, -11), Vector2(-6, 0), Vector2(-12, 11)])
 	draw_colored_polygon(hull, Color(0.85, 0.9, 1.0))

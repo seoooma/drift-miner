@@ -5,7 +5,8 @@ extends Node2D
 signal depleted(asteroid: Asteroid)
 
 const COLORS := {
-	"iron": Color(0.85, 0.62, 0.45),
+	"iron": Color(0.72, 0.75, 0.85),
+	"copper": Color(0.95, 0.55, 0.3),
 	"ice": Color(0.55, 0.85, 1.0),
 	"crystal": Color(0.9, 0.45, 1.0),
 }

@@ -13,17 +13,20 @@ func setup(data: Dictionary) -> void:
 	visible = false
 
 
-## 中身を決めて返す：{"text": 表示, "kind": 種類, "amount": 量}
+## 中身を決めて返す：{"kind": 種類, "amount": 量, "text": 表示}
 func open() -> Dictionary:
-	if roll < 0.25:
-		return {"kind": "crystal", "amount": 4.0 + floor(roll * 16.0), "text": "結晶"}
-	elif roll < 0.5:
-		return {"kind": "fuel", "amount": 30.0, "text": "燃料"}
+	var m := GameState.salvage_mult
+	if roll < 0.2:
+		return {"kind": "crystal", "amount": (4.0 + floor(roll * 20.0)) * m}
+	elif roll < 0.4:
+		return {"kind": "fuel", "amount": 30.0 * m}
+	elif roll < 0.55:
+		return {"kind": "plate", "amount": 12.0 * m}
 	elif roll < 0.7:
-		return {"kind": "iron", "amount": 30.0, "text": "鉄"}
+		return {"kind": "kit", "amount": m}
 	elif roll < 0.85:
-		return {"kind": "map", "amount": 0.0, "text": "星図"}
-	return {"kind": "trap", "amount": 15.0, "text": "罠"}
+		return {"kind": "map", "amount": 0.0}
+	return {"kind": "trap", "amount": 15.0}
 
 
 func _process(delta: float) -> void:
