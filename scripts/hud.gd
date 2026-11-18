@@ -44,7 +44,16 @@ func _ready() -> void:
 	_over_label = Label.new()
 	_over_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_over_label.add_theme_font_size_override("font_size", 24)
-	_over_panel.add_child(_over_label)
+	var over_box := VBoxContainer.new()
+	over_box.add_theme_constant_override("separation", 16)
+	_over_panel.add_child(over_box)
+	over_box.add_child(_over_label)
+	var retry := Button.new()
+	retry.text = "もう一度遊ぶ"
+	retry.custom_minimum_size = Vector2(0, 64)
+	retry.add_theme_font_size_override("font_size", 22)
+	retry.pressed.connect(func(): main.restart())
+	over_box.add_child(retry)
 
 
 func _make_panel() -> PanelContainer:
@@ -69,6 +78,8 @@ func _process(delta: float) -> void:
 		"ワープ費用：%s" % gs.cost_text(gs.warp_cost()),
 	]
 	_info.text = "\n".join(lines)
+	if main != null and main.touch.active:
+		_help.text = "左：スティックで移動  右：押している場所を採掘"
 	_info.modulate = Color(1, 0.4, 0.4) if gs.fuel < 20.0 else Color.WHITE
 
 	if _toast_time > 0.0:
@@ -92,7 +103,8 @@ func show_perk_choice(options: Array) -> void:
 	for p in options:
 		var b := Button.new()
 		b.text = "%s\n%s" % [p["name"], p["desc"]]
-		b.custom_minimum_size = Vector2(0, 64)
+		b.custom_minimum_size = Vector2(0, 72)
+		b.add_theme_font_size_override("font_size", 20)
 		b.pressed.connect(_on_perk_pressed.bind(String(p["id"])))
 		_perk_box.add_child(b)
 	_perk_panel.visible = true
@@ -104,7 +116,7 @@ func _on_perk_pressed(id: String) -> void:
 
 
 func show_game_over(reason: String) -> void:
-	_over_label.text = "ゲームオーバー：%s\n到達セクター：%d\n\nRキーでリスタート" % [reason, GameState.sector]
+	_over_label.text = "ゲームオーバー：%s\n到達セクター：%d\n\n（Rキーでもリスタート）" % [reason, GameState.sector]
 	_over_panel.visible = true
 
 

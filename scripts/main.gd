@@ -8,12 +8,14 @@ const WARP_REFUEL := 30.0
 
 const StarfieldScript := preload("res://scripts/starfield.gd")
 const HudScript := preload("res://scripts/hud.gd")
+const TouchScript := preload("res://scripts/touch_controls.gd")
 
 var starfield: Node2D
 var asteroid_layer: Node2D
 var gate: WarpGate
 var player: Player
 var hud: CanvasLayer
+var touch: CanvasLayer
 
 
 func _ready() -> void:
@@ -34,6 +36,11 @@ func _ready() -> void:
 	player.main = self
 	player.world_radius = WORLD_RADIUS
 	add_child(player)
+
+	touch = TouchScript.new()
+	touch.main = self
+	add_child(touch)
+	player.touch = touch
 
 	hud = HudScript.new()
 	hud.main = self
@@ -74,12 +81,34 @@ func _process(_delta: float) -> void:
 		hud.toast("ワープゲートを発見！")
 
 
-func asteroid_at(p: Vector2) -> Asteroid:
+## p の位置にある発見済みの小惑星。slack はタッチ用に当たり判定を広げる倍率。
+func asteroid_at(p: Vector2, slack: float = 1.1) -> Asteroid:
+	var best: Asteroid = null
+	var best_d := INF
 	for a in asteroid_layer.get_children():
 		var ast := a as Asteroid
-		if ast.discovered and ast.is_alive() and ast.position.distance_to(p) <= ast.radius * 1.1:
-			return ast
-	return null
+		if not ast.discovered or not ast.is_alive():
+			continue
+		var d := ast.position.distance_to(p)
+		if d <= ast.radius * slack + (20.0 if slack > 1.1 else 0.0) and d < best_d:
+			best = ast
+			best_d = d
+	return best
+
+
+## 採掘範囲内で、まだ採掘機が無い一番近い小惑星。
+func nearest_free_asteroid() -> Asteroid:
+	var best: Asteroid = null
+	var best_d := INF
+	for a in asteroid_layer.get_children():
+		var ast := a as Asteroid
+		if not ast.discovered or not ast.is_alive() or ast.has_miner or not player.in_range(ast):
+			continue
+		var d := ast.position.distance_to(player.position)
+		if d < best_d:
+			best = ast
+			best_d = d
+	return best
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -96,6 +125,19 @@ func try_place_miner() -> void:
 	if a == null:
 		hud.toast("採掘機を置く小惑星にカーソルを合わせてください")
 		return
+	_place_miner_on(a)
+
+
+## タッチ用：近くの空いている小惑星に自動で設置する。
+func try_place_miner_nearest() -> void:
+	var a := nearest_free_asteroid()
+	if a == null:
+		hud.toast("近くに設置できる小惑星がありません")
+		return
+	_place_miner_on(a)
+
+
+func _place_miner_on(a: Asteroid) -> void:
 	if a.has_miner:
 		hud.toast("この小惑星には設置済みです")
 		return
@@ -122,6 +164,7 @@ func try_warp() -> void:
 		hud.toast("ワープに必要：%s" % GameState.cost_text(cost))
 		return
 	get_tree().paused = true
+	touch.reset()
 	hud.show_perk_choice(GameState.roll_perks(3))
 
 
@@ -135,6 +178,7 @@ func on_perk_chosen(id: String) -> void:
 
 func _on_run_over(reason: String) -> void:
 	get_tree().paused = true
+	touch.reset()
 	hud.show_game_over(reason)
 
 

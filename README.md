@@ -14,6 +14,20 @@ Godot 4.3 以降で `project.godot` を開き、F5 で実行します。アセ�
 | E | ワープゲートの近くで次のセクターへワープ |
 | R | ゲームオーバー後にリスタート |
 
+### スマホで遊ぶ
+
+`main` にマージされるたびに GitHub Actions が Web 版を書き出し、GitHub Pages に公開します。
+URL：https://seoooma.github.io/drift-miner/ （横向き推奨）
+
+| タッチ操作 | 内容 |
+| --- | --- |
+| 画面左側をドラッグ | バーチャルスティックで移動 |
+| 画面右側を長押し | 押している場所の小惑星を採掘 |
+| 「採掘機設置」ボタン | 近くの空いている小惑星に自動採掘機を設置 |
+| 「ワープ」ボタン | ゲート付近でワープ |
+
+日本語表示のために Noto Sans JP のサブセット（JIS第1・第2水準漢字＋かな）を同梱しています（SIL OFL、`fonts/OFL.txt`）。
+
 ## コアループ
 
 1. セクターをシード値から生成（ノイズで小惑星帯の密集地帯を作る）
@@ -38,6 +52,7 @@ scripts/asteroid.gd       小惑星（形もシードから生成）
 scripts/miner.gd          自動採掘機
 scripts/warp_gate.gd      ワープゲート
 scripts/hud.gd            UI、パーク選択、ゲームオーバー
+scripts/touch_controls.gd スマホ用タッチ操作
 scripts/starfield.gd      背景の星とセクター境界
 ```
 
