@@ -24,12 +24,13 @@ func _process(delta: float) -> void:
 		return
 	var speed := SPEED * GameState.drone_speed_mult
 	var core_pos: Vector2 = main.core.global_position
+	var carry := CARRY * GameState.drone_carry_mult
 	for d in drones:
 		match String(d["state"]):
 			"idle":
 				var m: Miner = _pick_miner()
 				if m != null:
-					m.reserved += CARRY
+					m.reserved += carry
 					d["target"] = m
 					d["state"] = "to_miner"
 				else:
@@ -41,9 +42,9 @@ func _process(delta: float) -> void:
 					continue
 				d["pos"] = (d["pos"] as Vector2).move_toward(m.global_position, speed * delta)
 				if (d["pos"] as Vector2).distance_to(m.global_position) < 4.0:
-					d["load"] = m.take(CARRY)
+					d["load"] = m.take(carry)
 					d["kind"] = m.kind
-					m.reserved = maxf(0.0, m.reserved - CARRY)
+					m.reserved = maxf(0.0, m.reserved - carry)
 					d["target"] = null
 					d["state"] = "to_core" if float(d["load"]) > 0.0 else "idle"
 			"to_core":
@@ -53,6 +54,11 @@ func _process(delta: float) -> void:
 					d["load"] = 0.0
 					d["state"] = "idle"
 	queue_redraw()
+
+
+## このハブの範囲に入っている採掘機か。
+func covers(p: Vector2) -> bool:
+	return global_position.distance_to(p) <= RANGE
 
 
 func _pick_miner() -> Miner:
@@ -73,7 +79,7 @@ func release() -> void:
 	for d in drones:
 		var m = d["target"]
 		if m != null and is_instance_valid(m):
-			m.reserved = maxf(0.0, m.reserved - CARRY)
+			m.reserved = maxf(0.0, m.reserved - CARRY * GameState.drone_carry_mult)
 
 
 func _draw() -> void:

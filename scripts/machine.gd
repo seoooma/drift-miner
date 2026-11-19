@@ -43,7 +43,7 @@ func _process(delta: float) -> void:
 		else:
 			status = "材料不足"
 	if working:
-		progress += delta * GameState.factory_mult / float(recipe["time"])
+		progress += delta * GameState.speed_of(btype) / float(recipe["time"])
 		if progress >= 1.0:
 			var out: Dictionary = recipe["out"]
 			for k in out:

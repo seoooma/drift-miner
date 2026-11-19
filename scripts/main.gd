@@ -1,13 +1,18 @@
 extends Node2D
-## ゲーム全体の進行。セクター生成、探索（霧）、建物の設置、危険、漂流物、ワープ、母艦を管理する。
+## ゲーム全体の進行（オートモード）。
+## 自機はオートパイロットで動き、建物はキットに合わせて自動で建つ。
+## プレイヤーが決めるのは「レベルアップ時の強化カード」「ワープの航路」「ゲーム速度」だけ。
 
 const WORLD_RADIUS := 2200.0
 const BASE_SCAN := 420.0
-const GATE_RANGE := 140.0
+const GATE_RANGE := 90.0
 const WARP_REFUEL := 30.0
 const ZONE_BURN := 2.5
 const DERELICT_RANGE := 60.0
-const PLACE_RANGE := 750.0
+const BUILD_INTERVAL := 0.5
+const MINER_MAX_DIST := 1300.0
+const ROUTE_SNOOZE := 25.0
+const SPEEDS := [1.0, 2.0, 3.0]
 
 const StarfieldScript := preload("res://scripts/starfield.gd")
 const HudScript := preload("res://scripts/hud.gd")
@@ -19,15 +24,22 @@ var object_layer: Node2D
 var building_layer: Node2D
 var miner_layer: Node2D
 var fx_layer: Node2D
-var preview: Node2D
 var core: ShipCore
 var player: Player
 var hud: CanvasLayer
 var touch: CanvasLayer
 var gates: Array = []
-var placing: String = ""
+
+## プレイヤーが選んだ行き先のゲート（null なら未選択）
+var route_gate: WarpGate = null
+var speed_index: int = 0
+## 強化カードを自動で選ぶか
+var auto_pick: bool = false
 
 var _meteor_timer: float = 0.0
+var _build_timer: float = 0.0
+var _route_snooze: float = 0.0
+var _known_gates: int = 0
 var _rng := RandomNumberGenerator.new()
 var _pending_gate: WarpGate = null
 var _tips_shown := {}
@@ -60,9 +72,6 @@ func _ready() -> void:
 
 	fx_layer = Node2D.new()
 	add_child(fx_layer)
-	preview = Node2D.new()
-	preview.draw.connect(_draw_preview)
-	add_child(preview)
 
 	touch = TouchScript.new()
 	touch.main = self
@@ -82,7 +91,6 @@ func _ready() -> void:
 
 
 ## スマホでは画面の短い辺を 450 として扱い、文字とボタンを大きく表示する。
-## 縦持ち・横持ちのどちらでも、長い辺は画面比に合わせて広がる。
 func _apply_mobile_scale() -> void:
 	var win := get_window()
 	var s := DisplayServer.window_get_size()
@@ -100,16 +108,16 @@ func _apply_mobile_scale() -> void:
 
 func open_mothership() -> void:
 	get_tree().paused = true
-	touch.reset()
+	Engine.time_scale = 1.0
 	hud.show_mothership()
 
 
 func launch_run() -> void:
 	GameState.new_run()
 	_tips_shown.clear()
-	placing = ""
 	build_sector(true)
 	hud.hide_panels()
+	Engine.time_scale = SPEEDS[speed_index]
 	get_tree().paused = false
 
 
@@ -122,7 +130,10 @@ func build_sector(clear_buildings: bool = true) -> void:
 			for c in layer.get_children():
 				c.queue_free()
 	gates.clear()
-	placing = ""
+	route_gate = null
+	_route_snooze = 0.0
+	_known_gates = 0
+	_build_timer = 0.0
 	GameState.start_sector()
 	_rng.seed = GameState.sector_seed() + 7
 
@@ -151,7 +162,7 @@ func build_sector(clear_buildings: bool = true) -> void:
 	starfield.regenerate(GameState.sector_seed(), info["tint"], data["zones"])
 
 	player.position = Vector2(0, 90)
-	player.velocity = Vector2.ZERO
+	player.reset_sector()
 	_meteor_timer = _next_meteor_delay()
 
 	var title := "セクター %d：%s" % [GameState.sector, info["name"]]
@@ -176,13 +187,66 @@ func _next_meteor_delay() -> float:
 	return _rng.randf_range(base * 0.7, base * 1.3)
 
 
+func toggle_speed() -> void:
+	speed_index = (speed_index + 1) % SPEEDS.size()
+	Engine.time_scale = SPEEDS[speed_index]
+
+
+func speed() -> float:
+	return SPEEDS[speed_index]
+
+
+func toggle_auto_pick() -> void:
+	auto_pick = not auto_pick
+
+
 func _process(delta: float) -> void:
-	preview.queue_redraw()
 	if not GameState.alive:
 		return
 	GameState.sector_time += delta
 
-	# 探索：スキャン範囲に入ったものだけ見えるようになる
+	_update_discovery()
+
+	_meteor_timer -= delta
+	if _meteor_timer <= 0.0:
+		_spawn_meteor()
+		_meteor_timer = _next_meteor_delay()
+
+	if GameState.sector_time > GameState.instability_grace - 15.0:
+		_tip("instab", "まもなく宙域が不安定化。燃料の減りが加速します")
+	if starfield.in_zone(player.position):
+		_tip("zone", "放射線域！燃料の減りが速くなります")
+
+	_build_timer -= delta
+	if _build_timer <= 0.0:
+		_build_timer = BUILD_INTERVAL
+		_auto_build()
+
+	# ゲートに着いたらワープ
+	if route_gate != null and is_instance_valid(route_gate) and player.position.distance_to(route_gate.position) < GATE_RANGE:
+		_warp(route_gate)
+		return
+
+	# 決めることがあれば一時停止して選ばせる（レベルアップ → 航路の順）
+	if hud.any_panel():
+		return
+	if GameState.pending_levels > 0:
+		_offer_level_cards()
+		return
+	_route_snooze -= delta
+	var found := discovered_gates()
+	if found.size() > _known_gates:
+		_known_gates = found.size()
+		_route_snooze = 0.0
+	if route_gate == null and not found.is_empty() and _route_snooze <= 0.0 and GameState.can_afford(GameState.warp_cost()):
+		_offer_routes(found)
+	elif route_gate == null and GameState.quantum_blocked() and not _tips_shown.has("blocked") and GameState.sector_time > 20.0:
+		_tips_shown["blocked"] = true
+		get_tree().paused = true
+		hud.show_blocked()
+
+
+func _update_discovery() -> void:
 	var scan := scan_radius()
 	for a in asteroid_layer.get_children():
 		var ast := a as Asteroid
@@ -196,23 +260,13 @@ func _process(delta: float) -> void:
 				_discover_gate(g, true)
 		elif o is Derelict:
 			var d := o as Derelict
+			if d.is_queued_for_deletion():
+				continue
 			if not d.discovered and d.position.distance_to(player.position) < scan:
 				d.discovered = true
 				d.visible = true
-				_tip("derelict", "漂流物を発見。近づくと中身を回収できます")
 			if d.discovered and d.position.distance_to(player.position) < DERELICT_RANGE:
 				_open_derelict(d)
-
-	if starfield.in_zone(player.position):
-		_tip("zone", "放射線域！燃料の減りが速くなります")
-
-	_meteor_timer -= delta
-	if _meteor_timer <= 0.0:
-		_spawn_meteor()
-		_meteor_timer = _next_meteor_delay()
-
-	if GameState.sector_time > GameState.instability_grace - 15.0:
-		_tip("instab", "まもなく宙域が不安定化。燃料の減りが加速します")
 
 
 func _discover_gate(g: WarpGate, announce: bool) -> void:
@@ -234,7 +288,71 @@ func _tip(id: String, text: String) -> void:
 	hud.toast(text, 3.5)
 
 
-# ---------------------------------------------------------------- 次にやること
+# ---------------------------------------------------------------- オートパイロット用の問い合わせ
+
+
+func discovered_gates() -> Array:
+	var out: Array = []
+	for g in gates:
+		if g.discovered:
+			out.append(g)
+	return out
+
+
+func any_gate_found() -> bool:
+	return not discovered_gates().is_empty()
+
+
+func nearest_hidden_gate(p: Vector2) -> WarpGate:
+	var best: WarpGate = null
+	var best_d := INF
+	for g in gates:
+		if not g.discovered and g.position.distance_to(p) < best_d:
+			best = g
+			best_d = g.position.distance_to(p)
+	return best
+
+
+func nearest_derelict(p: Vector2, max_dist: float) -> Derelict:
+	var best: Derelict = null
+	var best_d := max_dist
+	for o in object_layer.get_children():
+		if o is Derelict and o.discovered and not o.is_queued_for_deletion():
+			var d: float = o.position.distance_to(p)
+			if d < best_d:
+				best = o
+				best_d = d
+	return best
+
+
+## いま足りない鉱石を、必要な順に返す。
+func needed_ores() -> Array:
+	var gs := GameState
+	var iron := (float(gs.items["iron_ore"]) + float(gs.items["plate"]) * 2.0) / 2.0
+	var copper := (float(gs.items["copper_ore"]) + float(gs.items["wire"]) / 2.0) / 1.5
+	var out: Array = ["iron", "copper"] if iron <= copper else ["copper", "iron"]
+	if _wants_crystal() and float(gs.items["crystal"]) < 10.0:
+		out.push_front("crystal")
+	return out
+
+
+func _wants_crystal() -> bool:
+	return built_count("quantum") > 0 or GameState.kit_count("quantum") > 0
+
+
+func hub_covers(p: Vector2) -> bool:
+	for b in building_layer.get_children():
+		if b is DroneHub and not b.is_queued_for_deletion() and (b as DroneHub).covers(p):
+			return true
+	return false
+
+
+func miners() -> Array:
+	var out: Array = []
+	for m in miner_layer.get_children():
+		if not m.is_queued_for_deletion():
+			out.append(m)
+	return out
 
 
 func built_count(btype: String) -> int:
@@ -246,36 +364,206 @@ func built_count(btype: String) -> int:
 	return n
 
 
-func next_step() -> String:
+func zone_burn_mult(p: Vector2) -> float:
+	return ZONE_BURN if starfield.in_zone(p) else 1.0
+
+
+# ---------------------------------------------------------------- 自動建設
+
+
+## キットを自動で配置する。1回に1つずつ建てるので、少しずつ工場が育っていく。
+func _auto_build() -> void:
+	for f in GameState.FACTORIES:
+		if GameState.kit_count(f) > 0:
+			var p := _factory_slot()
+			if p != Vector2.INF:
+				GameState.add_kit(f, -1)
+				var mc := Machine.new()
+				mc.position = p
+				building_layer.add_child(mc)
+				mc.setup(f)
+				_built_fx(p)
+			return
+	if GameState.kit_count("hub") > 0 and _place_hub():
+		return
+	_place_miner()
+
+
+func _built_fx(p: Vector2) -> void:
+	Fx.burst(fx_layer, p, Color(1.0, 0.85, 0.3), 14, 120.0)
+
+
+## 母船のまわりの円周上で、空いている場所を内側から探す。
+func _factory_slot() -> Vector2:
+	for ring in [110.0, 175.0, 240.0, 305.0, 370.0]:
+		var n := int(TAU * ring / 62.0)
+		for i in n:
+			var p: Vector2 = Vector2.from_angle(TAU * i / n + ring * 0.01) * ring
+			if _free_at(p, 26.0):
+				return p
+	return Vector2.INF
+
+
+func _free_at(p: Vector2, r: float) -> bool:
+	for a in asteroid_layer.get_children():
+		var ast := a as Asteroid
+		if ast.is_alive() and ast.position.distance_to(p) < ast.radius + r:
+			return false
+	for b in building_layer.get_children():
+		if not b.is_queued_for_deletion() and b.global_position.distance_to(p) < r + 24.0:
+			return false
+	return true
+
+
+## ハブはドローンが届かない採掘機の中心あたりに置く。最初の1台は母船の隣。
+func _place_hub() -> bool:
+	var target := Vector2.ZERO
+	if built_count("hub") == 0:
+		if miners().is_empty():
+			return false
+		target = Vector2(0, -80)
+	else:
+		var sum := Vector2.ZERO
+		var n := 0
+		for m in miners():
+			if not hub_covers(m.global_position):
+				sum += m.global_position
+				n += 1
+		if n == 0:
+			return false
+		target = sum / n
+	for i in 12:
+		var p := target + Vector2.from_angle(i * 2.4) * (i * 22.0)
+		if _free_at(p, 22.0):
+			GameState.add_kit("hub", -1)
+			var h := DroneHub.new()
+			h.position = p
+			h.main = self
+			building_layer.add_child(h)
+			_built_fx(p)
+			hud.toast("ドローンハブを設置")
+			return true
+	return false
+
+
+func _place_miner() -> void:
 	var gs := GameState
-	var need := gs.warp_cost()
-	var lack_c := int(need.get("circuit", 0)) - gs.count("circuit")
-	var lack_q := int(need.get("qcore", 0)) - gs.count("qcore")
-	var s := ""
-	if lack_c > 0 or lack_q > 0:
-		if built_count("smelter") == 0:
-			s = "製鉄炉を母船の青い円の中に建てる"
-		elif built_count("miner") == 0:
-			s = "採掘機を小惑星に置く（灰＝鉄、橙＝銅）"
-		elif built_count("wiremill") == 0:
-			s = "伸線機を建てる（銅鉱石→銅線）"
-		elif built_count("assembler") == 0:
-			s = "組立機を建てる（鉄板8・銅線6）"
-		elif lack_c > 0:
-			s = "回路を作る（あと%d）" % lack_c
-		elif not gs.building_unlocked("quantum"):
-			s = "量子コアが必要。母艦で「量子炉の設計図」を研究"
-		elif built_count("quantum") == 0:
-			s = "量子炉を建てる（回路6・鉄板10）"
-		else:
-			s = "量子コアを作る（あと%d）" % lack_q
-	var found := false
-	for g in gates:
-		if g.discovered:
-			found = true
-	if s == "":
-		return "ゲートへ向かってワープ！" if found else "ゲートを探す（外側へ）"
-	return s if found else s + "／ゲートを探す"
+	if built_count("miner") >= gs.miner_cap:
+		return
+	var use_kit := gs.kit_count("miner") > 0
+	# キットが無ければ鉄板で作る。ただし回路に使う分は残しておく
+	var reserve := 6.0 if built_count("assembler") > 0 else 0.0
+	if not use_kit and float(gs.items["plate"]) < 4.0 + reserve:
+		return
+	var wanted: Array = needed_ores()
+	var best: Asteroid = null
+	var best_s := INF
+	for c in asteroid_layer.get_children():
+		var a := c as Asteroid
+		if not a.discovered or not a.is_alive() or a.has_miner or a.kind == "ice":
+			continue
+		if not (a.kind in wanted) or a.amount < 25.0:
+			continue
+		var d := a.position.length()
+		if d > MINER_MAX_DIST:
+			continue
+		var s := d - a.amount * 0.5
+		if not hub_covers(a.position):
+			s += 350.0
+		s += wanted.find(a.kind) * 250.0
+		if s < best_s:
+			best = a
+			best_s = s
+	if best == null:
+		return
+	if use_kit:
+		gs.add_kit("miner", -1)
+	else:
+		gs.pay(gs.BUILDINGS["miner"]["cost"])
+	var m := Miner.new()
+	miner_layer.add_child(m)
+	m.setup(best)
+	best.has_miner = true
+	_built_fx(best.global_position)
+
+
+# ---------------------------------------------------------------- 選択（カード・航路）
+
+
+func _offer_level_cards() -> void:
+	var opts := GameState.roll_cards(GameState.card_choices())
+	if auto_pick:
+		_apply_level_card(String(_auto_choice(opts)["id"]))
+		return
+	get_tree().paused = true
+	hud.show_cards("レベル %d！強化を1つ選ぶ" % (GameState.level - GameState.pending_levels + 1), opts, "", _on_level_card, GameState.has_skill("reroll"))
+
+
+func _on_level_card(id: String) -> void:
+	_apply_level_card(id)
+	get_tree().paused = false
+
+
+func _apply_level_card(id: String) -> void:
+	GameState.pending_levels = maxi(0, GameState.pending_levels - 1)
+	if id != "":
+		GameState.apply_card(id)
+		var c := _card(id)
+		hud.toast("強化：%s" % c.get("name", id))
+
+
+func _card(id: String) -> Dictionary:
+	for c in GameState.CARDS:
+		if c["id"] == id:
+			return c
+	return {}
+
+
+## おまかせ選択：足りない工程を優先し、なければ重みの大きいものを選ぶ。
+func _auto_choice(opts: Array) -> Dictionary:
+	var best: Dictionary = opts[0]
+	var best_s := -INF
+	for c in opts:
+		var id := String(c["id"])
+		var s := float(c["w"]) + randf()
+		if GameState.fuel / GameState.max_fuel < 0.35 and id in ["fuel_eff", "big_tank", "ice_refinery"]:
+			s += 6.0
+		if id == "add_quantum" and GameState.sector >= 3 and built_count("quantum") == 0:
+			s += 8.0
+		if id.begins_with("add_"):
+			s += 1.5
+		if s > best_s:
+			best = c
+			best_s = s
+	return best
+
+
+func _offer_routes(found: Array) -> void:
+	get_tree().paused = true
+	hud.show_routes(found)
+
+
+## 航路の選択。gate が null なら探索を続ける。
+func on_route_chosen(gate: WarpGate) -> void:
+	hud.hide_panels()
+	if gate == null:
+		_route_snooze = ROUTE_SNOOZE
+	elif GameState.pay(GameState.warp_cost()):
+		route_gate = gate
+		hud.toast("航路決定。ゲートへ向かいます")
+	get_tree().paused = false
+
+
+## 先へ進めないときに、ランを切り上げて母艦へ帰る。
+func retreat() -> void:
+	hud.hide_panels()
+	get_tree().paused = false
+	GameState.end_run("母艦へ帰還", false)
+
+
+func keep_going() -> void:
+	hud.hide_panels()
+	get_tree().paused = false
 
 
 # ---------------------------------------------------------------- 漂流物と危険
@@ -301,6 +589,8 @@ func _open_derelict(d: Derelict) -> void:
 			col = Asteroid.COLORS["ice"]
 		"kit":
 			var choices := ["miner", "hub", "smelter", "wiremill", "assembler"]
+			if GameState.has_skill("quantum"):
+				choices.append("quantum")
 			var b: String = choices[_rng.randi() % choices.size()]
 			GameState.add_kit(b, int(amt))
 			hud.toast("漂流物：%sのキット +%d" % [GameState.BUILDINGS[b]["name"], int(amt)])
@@ -337,7 +627,7 @@ func _spawn_meteor() -> void:
 	meteor.position = target
 	meteor.impacted.connect(_on_meteor_impact)
 	fx_layer.add_child(meteor)
-	_tip("meteor", "隕石の落下予告！範囲内の建物は壊れます")
+	_tip("meteor", "隕石の落下予告！壊れた工場は自動で建て直します")
 
 
 func _on_meteor_impact(m: Meteor) -> void:
@@ -347,6 +637,9 @@ func _on_meteor_impact(m: Meteor) -> void:
 	for b in _all_buildings():
 		if b.global_position.distance_to(p) < Meteor.RADIUS:
 			Fx.burst(fx_layer, b.global_position, Color(1.0, 0.85, 0.3), 16)
+			# 工場とハブはキットに戻って建て直される。採掘機は失われる
+			if not (b is Miner):
+				GameState.add_kit(String(b.get("btype")), 1)
 			_remove_building(b)
 			lost += 1
 	if player.position.distance_to(p) < Meteor.RADIUS:
@@ -371,219 +664,40 @@ func _remove_building(b: Node) -> void:
 
 func _on_asteroid_depleted(a: Asteroid) -> void:
 	Fx.burst(fx_layer, a.global_position, a.color(), 24, 150.0 + a.radius * 2.0)
-	if a.global_position.distance_to(player.position) < 600.0:
-		player.shake(6.0)
-
-
-func zone_burn_mult(p: Vector2) -> float:
-	return ZONE_BURN if starfield.in_zone(p) else 1.0
-
-
-func miners() -> Array:
-	var out: Array = []
-	for m in miner_layer.get_children():
-		if not m.is_queued_for_deletion():
-			out.append(m)
-	return out
-
-
-## 狙った位置に吸い付く小惑星（外周からの距離が slack 以内で一番近いもの）。
-func lock_target(p: Vector2, slack: float) -> Asteroid:
-	var best: Asteroid = null
-	var best_d := INF
-	for a in asteroid_layer.get_children():
-		var ast := a as Asteroid
-		if not ast.discovered or not ast.is_alive():
-			continue
-		var d := ast.position.distance_to(p) - ast.radius
-		if d <= slack and d < best_d:
-			best = ast
-			best_d = d
-	return best
-
-
-func gate_in_range() -> WarpGate:
-	for g in gates:
-		if g.discovered and player.position.distance_to(g.position) <= GATE_RANGE:
-			return g
-	return null
-
-
-# ---------------------------------------------------------------- 建設
-
-
-func can_start_placing(btype: String) -> bool:
-	if not GameState.building_unlocked(btype):
-		return false
-	return GameState.kit_count(btype) > 0 or GameState.can_afford(GameState.BUILDINGS[btype]["cost"])
-
-
-func toggle_placing(btype: String) -> void:
-	if placing == btype:
-		placing = ""
-		return
-	if not GameState.building_unlocked(btype):
-		hud.toast("母艦で研究すると建てられます")
-		return
-	if not can_start_placing(btype):
-		hud.toast("資源不足（必要：%s）" % GameState.cost_text(GameState.BUILDINGS[btype]["cost"]))
-		return
-	placing = btype
-	match btype:
-		"miner":
-			hud.toast("採掘機を置く小惑星をタップ（ボタンをもう一度で取消）")
-		"hub":
-			hud.toast("ハブを置く場所をタップ（黄色い円の範囲から運ぶ）")
-		_:
-			hud.toast("母船の青い円の中をタップして設置（ボタンをもう一度で取消）")
-
-
-## 設置できるかを調べ、理由（空文字ならOK）を返す。
-func placement_problem(btype: String, p: Vector2) -> String:
-	if btype == "miner":
-		var a := lock_target(p, 30.0)
-		if a == null:
-			return "小惑星を選んでください"
-		if a.has_miner:
-			return "この小惑星には設置済みです"
-		return ""
-	if p.distance_to(player.position) > PLACE_RANGE:
-		return "自機から遠すぎます"
-	if p.distance_to(core.position) < ShipCore.BODY_RADIUS + 30.0:
-		return "母船に重なっています"
-	if btype != "hub" and p.distance_to(core.position) > ShipCore.SUPPLY_RADIUS:
-		return "工場は母船の青い円の中に置いてください"
-	for a in asteroid_layer.get_children():
-		var ast := a as Asteroid
-		if ast.is_alive() and ast.position.distance_to(p) < ast.radius + 24.0:
-			return "小惑星に重なっています"
-	for b in building_layer.get_children():
-		if not b.is_queued_for_deletion() and b.global_position.distance_to(p) < 44.0:
-			return "他の建物に重なっています"
-	return ""
-
-
-func try_place_at(p: Vector2) -> void:
-	if placing == "":
-		return
-	var btype := placing
-	var problem := placement_problem(btype, p)
-	if problem != "":
-		hud.toast(problem)
-		return
-	if GameState.kit_count(btype) > 0:
-		GameState.add_kit(btype, -1)
-	elif not GameState.pay(GameState.BUILDINGS[btype]["cost"]):
-		hud.toast("資源不足")
-		placing = ""
-		return
-	var where := p
-	match btype:
-		"miner":
-			var a := lock_target(p, 30.0)
-			var m := Miner.new()
-			miner_layer.add_child(m)
-			m.setup(a)
-			a.has_miner = true
-			where = a.global_position
-		"hub":
-			var h := DroneHub.new()
-			h.position = p
-			h.main = self
-			building_layer.add_child(h)
-		_:
-			var mc := Machine.new()
-			mc.position = p
-			building_layer.add_child(mc)
-			mc.setup(btype)
-	Fx.burst(fx_layer, where, Color(1.0, 0.85, 0.3), 14, 120.0)
-	if not can_start_placing(btype):
-		placing = ""
-
-
-func _draw_preview() -> void:
-	if placing == "":
-		return
-	var t := Time.get_ticks_msec() * 0.001
-	if placing == "miner":
-		for a in asteroid_layer.get_children():
-			var ast := a as Asteroid
-			if ast.discovered and ast.is_alive() and not ast.has_miner:
-				var rr := ast.radius + 16.0
-				for i in 10:
-					var a0 := TAU * i / 10.0 + t
-					preview.draw_arc(ast.position, rr, a0, a0 + 0.3, 4, Color(1.0, 0.85, 0.3, 0.6), 2.0)
-		return
-	if placing != "hub":
-		preview.draw_arc(core.position, ShipCore.SUPPLY_RADIUS, 0.0, TAU, 96, Color(0.4, 0.8, 1.0, 0.5 + 0.3 * sin(t * 5.0)), 4.0)
-	if not touch.active:
-		var mp := get_global_mouse_position()
-		var ok := placement_problem(placing, mp) == ""
-		var c := Color(0.4, 1.0, 0.5, 0.7) if ok else Color(1.0, 0.3, 0.3, 0.7)
-		if placing == "hub":
-			preview.draw_arc(mp, DroneHub.RANGE, 0.0, TAU, 96, Color(1.0, 0.9, 0.5, 0.35), 2.0)
-		preview.draw_rect(Rect2(mp - Vector2(15, 15), Vector2(30, 30)), c, false, 2.0)
-
-
-# ---------------------------------------------------------------- 入力
-
-
-func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		match event.physical_keycode:
-			KEY_E:
-				try_warp()
-			KEY_ESCAPE:
-				placing = ""
-			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
-				var i: int = event.physical_keycode - KEY_1
-				if i < GameState.BUILD_ORDER.size():
-					toggle_placing(GameState.BUILD_ORDER[i])
-	elif event is InputEventMouseButton and event.pressed and not touch.active:
-		if event.button_index == MOUSE_BUTTON_LEFT and placing != "":
-			try_place_at(get_global_mouse_position())
-			get_viewport().set_input_as_handled()
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			placing = ""
 
 
 # ---------------------------------------------------------------- ワープ
 
 
-func try_warp() -> void:
-	var g := gate_in_range()
-	if g == null:
-		hud.toast("ワープゲートに近づいてください")
-		return
-	var cost := GameState.warp_cost()
-	if not GameState.pay(cost):
-		hud.toast("ワープに必要：%s" % GameState.cost_text(cost))
-		return
+func _warp(g: WarpGate) -> void:
+	route_gate = null
 	if GameState.is_final_sector():
 		GameState.end_run("帰還成功", true)
 		return
-	# 建物は畳んでキットに戻し、次のセクターで再配置する
-	var packed := 0
+	# 建物は畳んでキットに戻し、次のセクターで自動的に再配置する
 	for b in _all_buildings():
 		if b is Miner:
 			var mm := b as Miner
 			GameState.add_ore(mm.kind, mm.stored)
 		GameState.add_kit(String(b.get("btype")), 1)
 		_remove_building(b)
-		packed += 1
-	placing = ""
 	_pending_gate = g
+	var n: int = g.perk_count() + (1 if GameState.has_skill("more_cards") else 0)
+	var opts := GameState.roll_cards(n)
+	if auto_pick:
+		_on_warp_card(String(_auto_choice(opts)["id"]))
+		return
 	get_tree().paused = true
-	touch.reset()
-	hud.show_perk_choice(GameState.roll_perks(g.perk_count()), packed)
+	var title := "ワープ成功！%s へ。強化を1つ選ぶ" % SectorGenerator.type_name(g.next_type)
+	hud.show_cards(title, opts, "受け取らずに燃料 +25", _on_warp_card, GameState.has_skill("reroll"))
 
 
-func on_perk_chosen(id: String) -> void:
+func _on_warp_card(id: String) -> void:
 	hud.hide_panels()
 	if id == "":
 		GameState.fuel = minf(GameState.max_fuel, GameState.fuel + 25.0)
 	else:
-		GameState.apply_perk(id)
+		GameState.apply_card(id)
 	GameState.sector_type = _pending_gate.next_type if _pending_gate != null else "standard"
 	_pending_gate = null
 	GameState.sector += 1
@@ -592,8 +706,14 @@ func on_perk_chosen(id: String) -> void:
 	get_tree().paused = false
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.physical_keycode == KEY_SPACE and GameState.alive and not hud.any_panel():
+			toggle_speed()
+
+
 func _on_run_over(reason: String, victory: bool) -> void:
 	get_tree().paused = true
-	placing = ""
-	touch.reset()
+	route_gate = null
+	Engine.time_scale = 1.0
 	hud.show_game_over(reason, victory)
