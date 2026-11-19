@@ -1,6 +1,6 @@
 extends Node2D
-## ゲームの進行。惑星の生成、採掘で得たクレジット、惑星クリアとカード選択、
-## 巨大惑星の制限時間、タップ掘り、自動強化、画面に合わせたカメラを受け持つ。
+## ゲームの進行。巨大惑星の生成と保存、砕いたブロックの報酬（クレジット・素材・遺物・宝箱）、
+## 惑星クリアと次の惑星、タップ掘り、自動タップ・自動強化、画面に合わせたカメラを受け持つ。
 
 const HudScript := preload("res://scripts/hud.gd")
 const BackdropScript := preload("res://scripts/backdrop.gd")
@@ -13,14 +13,14 @@ var camera: Camera2D
 var hud: CanvasLayer
 var touch_ui: bool = false
 
-var boss_left: float = 0.0
 var _pop_acc: float = 0.0
 var _pop_pos := Vector2.ZERO
-var _pop_col := Color.WHITE
 var _pop_t: float = 0.0
+var _mat_pop := {}
+var _mat_pop_t: float = 0.0
 var _auto_t: float = 0.0
-var _rerolls_left: int = 0
-var _jackpot_cool: float = 0.0
+var _tap_t: float = 0.0
+var _zoom: float = 0.0
 
 
 func _ready() -> void:
@@ -46,11 +46,12 @@ func _ready() -> void:
 
 	planet.cell_broken.connect(_on_cell_broken)
 	planet.cleared.connect(_on_cleared)
+	GameState.hp_provider = func() -> PackedFloat32Array: return planet.hp
 
 	if touch_ui:
 		get_tree().root.size_changed.connect(_apply_mobile_scale)
 		_apply_mobile_scale()
-	new_planet()
+	build_planet(GameState.saved_hp)
 	if GameState.offline_gain > 0.0:
 		hud.show_offline(GameState.offline_gain, GameState.offline_secs)
 
@@ -68,49 +69,60 @@ func _apply_mobile_scale() -> void:
 		win.content_scale_size = Vector2i(int(short_side * float(s.x) / s.y), short_side)
 
 
-func new_planet() -> void:
+func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 	for c in fx_layer.get_children():
 		c.queue_free()
 	var gs := GameState
 	planet.position = Vector2.ZERO
-	planet.generate(hash("%d:%d" % [gs.run_seed, gs.planet]), gs.is_boss())
+	planet.generate(hash("%d:%d" % [gs.run_seed, gs.planet]), gs.trait_def()["rates"])
+	if not saved.is_empty():
+		planet.restore(saved)
 	tools.reset_for(planet)
-	boss_left = gs.boss_time() if gs.is_boss() else 0.0
-	_rerolls_left = gs.rerolls()
-	var title := "銀河 %d ・ 惑星 %d" % [gs.galaxy(), gs.planet_in_galaxy()]
-	hud.banner(title, "巨大惑星！%d秒以内に割る" % int(boss_left) if gs.is_boss() else "")
+	_zoom = 0.0
+	var tr := gs.trait_def()
+	hud.banner("惑星 %d：%s" % [gs.planet, tr["name"]], String(tr["desc"]) if saved.is_empty() else "")
 
 
 func _process(delta: float) -> void:
-	_fit_camera()
+	_fit_camera(delta)
 	var gs := GameState
-	if gs.is_boss() and not planet.done:
-		boss_left -= delta
-		if boss_left <= 0.0:
-			hud.toast("時間切れ…巨大惑星が再生した。ツールを強化して再挑戦！", 3.5)
-			new_planet()
-	if gs.skill_level("autobuy") > 0:
+	if gs.skill_level("auto_buy") > 0:
 		_auto_t += delta
 		if _auto_t >= 0.5:
 			_auto_t = 0.0
 			_auto_buy()
+	var taps := gs.skill_level("auto_tap")
+	if taps > 0 and not planet.done:
+		_tap_t += delta
+		if _tap_t >= 1.0 / taps:
+			_tap_t = 0.0
+			var i := planet.random_surface_cell()
+			if i >= 0:
+				tap_at(planet.cell_center(i))
 	_pop_t -= delta
-	_jackpot_cool -= delta
 	if _pop_t <= 0.0 and _pop_acc > 0.0:
-		Fx.popup(fx_layer, _pop_pos, "+" + gs.fmt(_pop_acc), _pop_col)
+		Fx.popup(fx_layer, _pop_pos, "+" + gs.fmt(_pop_acc), Color(0.85, 1.0, 0.9))
 		_pop_acc = 0.0
-		_pop_t = 0.3
+		_pop_t = 0.35
+	_mat_pop_t -= delta
+	if _mat_pop_t <= 0.0 and not _mat_pop.is_empty():
+		_mat_pop_t = 0.5
+		for m in _mat_pop:
+			var e: Array = _mat_pop[m]
+			Fx.popup(fx_layer, e[1] + Vector2(0, -14), "+%s %s" % [gs.fmt(e[0]), gs.MAT_NAMES[m]], gs.MAT_COLORS[m])
+		_mat_pop.clear()
 
 
-## 惑星とツールが HUD の「惑星エリア」にちょうど収まるようにカメラを合わせる。
-func _fit_camera() -> void:
+## 惑星が HUD の「惑星エリア」からはみ出すくらい大きく映るようにカメラを合わせる。
+## 削れて小さくなるほど寄っていく。
+func _fit_camera(delta: float) -> void:
 	var area: Rect2 = hud.planet_area()
-	var need := (planet.world_radius() + 110.0) * 2.0
-	var z := minf(area.size.x, area.size.y) / need
-	camera.zoom = Vector2(z, z)
+	var target := minf(area.size.x, area.size.y) / (planet.outer * 2.0 * 0.86)
+	target = minf(target, 4.0)
+	_zoom = target if _zoom <= 0.0 else lerpf(_zoom, target, clampf(delta * 1.5, 0.0, 1.0))
+	camera.zoom = Vector2(_zoom, _zoom)
 	var vp := get_viewport().get_visible_rect().size
-	# 画面中心からエリア中心へのずれを、ワールド座標に直してカメラをずらす
-	camera.position = planet.position - (area.get_center() - vp * 0.5) / z
+	camera.position = planet.position - (area.get_center() - vp * 0.5) / _zoom
 
 
 func _auto_buy() -> void:
@@ -119,6 +131,8 @@ func _auto_buy() -> void:
 	var best_c := INF
 	for t in gs.TOOLS:
 		var id := String(t["id"])
+		if not gs.tool_unlocked(id):
+			continue
 		var c := gs.upgrade_cost(id)
 		if c < best_c:
 			best = id
@@ -127,52 +141,59 @@ func _auto_buy() -> void:
 		gs.buy_tool(best)
 
 
-func _on_cell_broken(pos: Vector2, value: float, ore: int) -> void:
+func _mat_amount() -> float:
+	return pow(1.3, GameState.planet - 1)
+
+
+func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 	var gs := GameState
-	if gs.card_count("jackpot") > 0 and randf() < 0.06 * gs.card_count("jackpot"):
-		value *= 10.0
-		if _jackpot_cool <= 0.0:
-			_jackpot_cool = 1.2
-			Fx.popup(fx_layer, pos, "大当たり ×10", Color(1.0, 0.9, 0.3))
 	gs.earn(value)
 	_pop_acc += value
 	_pop_pos = pos
-	_pop_col = Color(0.85, 1.0, 0.9) if ore == 0 else gs.ORE_COLORS[ore].lightened(0.3)
-	if ore >= 3:
-		Fx.burst(fx_layer, pos, gs.ORE_COLORS[ore], 8, 90.0)
+	var m := String(gs.BLOCKS[b]["mat"])
+	if m != "":
+		var got := gs.add_mat(m, _mat_amount())
+		var e: Array = _mat_pop.get(m, [0.0, pos])
+		_mat_pop[m] = [float(e[0]) + got, pos]
+		if b == gs.B.GOLD or b == gs.B.CRYSTAL:
+			Fx.burst(fx_layer, pos, gs.BLOCK_COLORS[b], 8, 90.0)
+	elif b == gs.B.RELIC:
+		var r := gs.add_random_relic()
+		Fx.burst(fx_layer, pos, Color(0.4, 1.0, 0.9), 40, 220.0)
+		hud.relic_found(r)
+	elif b == gs.B.CACHE:
+		var cr := gs.cell_value(planet.depth[planet.cell_at(pos)] if planet.cell_at(pos) >= 0 else 0.0) * 80.0
+		gs.earn(cr)
+		var mats: Array = gs.MATS.slice(0, mini(gs.MATS.size(), 1 + gs.planet))
+		var mm: String = mats[randi() % mats.size()]
+		var got := gs.add_mat(mm, _mat_amount() * randf_range(4.0, 10.0))
+		Fx.burst(fx_layer, pos, Color(1.0, 0.85, 0.3), 36, 200.0)
+		Fx.popup(fx_layer, pos, "宝箱！ +%s CR・%s +%s" % [gs.fmt(cr), gs.MAT_NAMES[mm], gs.fmt(got)], Color(1.0, 0.9, 0.4))
+
+
+func on_explosion(c: Vector2, r: float) -> void:
+	Fx.burst(fx_layer, c, Color(1.0, 0.45, 0.2), 30, r * 4.0)
 
 
 func _on_cleared() -> void:
 	var gs := GameState
 	var bonus := planet.remaining_value() * 0.5
 	gs.earn(bonus)
-	Fx.burst(fx_layer, planet.position, Color(1.0, 0.85, 0.5), 80, 420.0)
-	Fx.popup(fx_layer, planet.position, "惑星を破壊！ +" + gs.fmt(bonus), Color(1.0, 0.9, 0.5))
-	await get_tree().create_timer(0.9).timeout
-	_offer_cards()
-
-
-func _offer_cards() -> void:
+	var extra := gs.finish_planet()
+	Fx.burst(fx_layer, planet.position, Color(1.0, 0.85, 0.5), 120, 520.0)
+	Fx.popup(fx_layer, planet.position, "惑星を破壊！", Color(1.0, 0.9, 0.5))
+	await get_tree().create_timer(1.2).timeout
 	get_tree().paused = true
-	hud.show_cards(GameState.roll_cards(GameState.card_choices()), _rerolls_left)
+	hud.show_clear(extra, gs.roll_next_traits())
+	gs.save()
 
 
-func reroll_cards() -> void:
-	if _rerolls_left <= 0:
-		return
-	_rerolls_left -= 1
-	hud.show_cards(GameState.roll_cards(GameState.card_choices()), _rerolls_left)
-
-
-func on_card_chosen(key: String) -> void:
+func go_next(trait_id: String) -> void:
 	var gs := GameState
-	gs.take_card(key)
-	gs.planet += 1
-	gs.best_planet_run = maxi(gs.best_planet_run, gs.planet)
-	gs.best_planet = maxi(gs.best_planet, gs.planet)
+	gs.start_planet(gs.planet + 1, trait_id)
 	hud.hide_panels()
 	get_tree().paused = false
-	new_planet()
+	build_planet()
 	gs.save()
 
 
@@ -181,14 +202,6 @@ func tap_at(world_pos: Vector2) -> void:
 		return
 	planet.hit_area(world_pos, Planet.CELL * 1.8, GameState.tap_damage())
 	tools.tap_effect(world_pos)
-
-
-func do_prestige() -> void:
-	GameState.prestige()
-	hud.hide_panels()
-	get_tree().paused = false
-	new_planet()
-	hud.toast("帰還完了。研究データでスキルを強化しよう", 3.0)
 
 
 func _unhandled_input(event: InputEvent) -> void:

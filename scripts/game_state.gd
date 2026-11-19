@@ -1,86 +1,131 @@
 extends Node
 ## ゲームの状態（Autoload）。
-## ラン：クレジット、ツールのレベル、いまの惑星、強化カード。帰還（プレステージ）でリセットされる。
-## メタ：研究データとスキル。帰還しても残る。どちらも保存し、閉じていた間の放置報酬も計算する。
+## 惑星（ラン）：クレジット、ツールのレベル、見つけた遺物、掘った跡。惑星を割ると次の惑星でリセット。
+## 永続：素材（鉄・銅・金・結晶）とスキルツリー。素材はブロックを砕くと手に入り、スキルの強化に使う。
 
 signal changed
 
-const SAVE_PATH := "user://drift_miner_idle.cfg"
-const PLANETS_PER_GALAXY := 5
-const BOSS_TIME := 40.0
-const CLEAR_RATIO := 0.85
+const SAVE_PATH := "user://drift_miner_v3.cfg"
+const CLEAR_RATIO := 0.95
 const OFFLINE_RATE := 0.5
 const OFFLINE_CAP_H := 2.0
 
-## 採掘ツール。dps は Lv1 のときの毎秒ダメージ。Lv25 ごとに2倍。
+## 採掘ツール。dps は Lv1 の毎秒ダメージ。Lv25 ごとに威力が上がる（基本 ×2）。
+## ドローン以外はスキルツリーで解放する。
 const TOOLS := [
-	{"id": "drone", "name": "採掘ドローン", "desc": "惑星のまわりを回り、表面を削る", "dps": 3.0, "cost": 8.0, "growth": 1.12, "color": Color(0.35, 0.9, 1.0)},
-	{"id": "cutter", "name": "回転カッター", "desc": "地表を転がりながら周囲を切り崩す", "dps": 22.0, "cost": 120.0, "growth": 1.13, "color": Color(1.0, 0.62, 0.25)},
-	{"id": "laser", "name": "掃射レーザー", "desc": "衛星から地表をなぎ払う貫通ビーム", "dps": 160.0, "cost": 2200.0, "growth": 1.14, "color": Color(1.0, 0.3, 0.4)},
-	{"id": "bomb", "name": "重力爆雷", "desc": "一定間隔で落ちて広い範囲を砕く", "dps": 1200.0, "cost": 4.0e4, "growth": 1.15, "color": Color(0.8, 0.45, 1.0)},
-	{"id": "lance", "name": "コアランス", "desc": "中心核へまっすぐ穴を掘り進む", "dps": 9500.0, "cost": 8.0e5, "growth": 1.16, "color": Color(0.45, 1.0, 0.5)},
-	{"id": "swarm", "name": "ナノスウォーム", "desc": "無数の微小機械が全面を少しずつ食べる", "dps": 80000.0, "cost": 1.6e7, "growth": 1.17, "color": Color(1.0, 0.9, 0.35)},
+	{"id": "drone", "name": "採掘ドローン", "desc": "惑星のまわりを回り、表面を削る", "dps": 2.0, "cost": 6.0, "growth": 1.11, "color": Color(0.35, 0.9, 1.0)},
+	{"id": "cutter", "name": "回転カッター", "desc": "地表を転がりながら周囲を切り崩す", "dps": 18.0, "cost": 150.0, "growth": 1.12, "color": Color(1.0, 0.62, 0.25)},
+	{"id": "laser", "name": "掃射レーザー", "desc": "衛星から地表をなぎ払う", "dps": 140.0, "cost": 4000.0, "growth": 1.13, "color": Color(1.0, 0.3, 0.4)},
+	{"id": "bomb", "name": "重力爆雷", "desc": "一定間隔で落ちて広い範囲を砕く", "dps": 1100.0, "cost": 1.2e5, "growth": 1.14, "color": Color(0.8, 0.45, 1.0)},
+	{"id": "lance", "name": "コアランス", "desc": "中心核へまっすぐ穴を掘り進む", "dps": 9000.0, "cost": 4.0e6, "growth": 1.15, "color": Color(0.45, 1.0, 0.5)},
+	{"id": "swarm", "name": "ナノスウォーム", "desc": "無数の微小機械が全面を少しずつ食べる", "dps": 80000.0, "cost": 1.5e8, "growth": 1.16, "color": Color(1.0, 0.9, 0.35)},
 ]
 
-## 鉱石の種類。hp と value は岩を1とした倍率。
-const ORES := [
-	{"name": "岩", "hp": 1.0, "value": 1.0},
-	{"name": "鉄", "hp": 1.2, "value": 2.0},
-	{"name": "銅", "hp": 1.3, "value": 3.0},
-	{"name": "金", "hp": 1.6, "value": 8.0},
-	{"name": "結晶", "hp": 2.5, "value": 20.0},
-	{"name": "核", "hp": 3.0, "value": 6.0},
-]
-const ORE_COLORS := [Color(0, 0, 0), Color(0.75, 0.78, 0.85), Color(0.95, 0.55, 0.3), Color(1.0, 0.85, 0.25), Color(0.85, 0.45, 1.0), Color(1.0, 0.45, 0.25)]
+## 素材（スキルツリーの通貨。惑星を割っても残る）
+const MATS := ["iron", "copper", "gold", "crystal"]
+const MAT_NAMES := {"iron": "鉄", "copper": "銅", "gold": "金", "crystal": "結晶"}
+const MAT_COLORS := {"iron": Color(0.78, 0.82, 0.9), "copper": Color(0.95, 0.55, 0.3), "gold": Color(1.0, 0.85, 0.25), "crystal": Color(0.85, 0.45, 1.0)}
 
-## 惑星を割るたびに3枚から1枚選ぶ強化カード（ランの間だけ有効）
-const CARDS := [
-	{"id": "tool_boost", "name": "%s 強化", "desc": "%sの威力 ×1.6", "w": 6, "rare": 0},
-	{"id": "all_dps", "name": "総合出力", "desc": "全ツールの威力 +30%", "w": 4, "rare": 0},
-	{"id": "value", "name": "鉱石鑑定", "desc": "獲得クレジット +35%", "w": 4, "rare": 0},
-	{"id": "discount", "name": "値切り交渉", "desc": "ツールの強化費用 -12%", "w": 3, "rare": 0},
-	{"id": "tap", "name": "手掘りの達人", "desc": "タップの威力 ×2.5", "w": 2, "rare": 0},
-	{"id": "rich", "name": "鉱脈探知", "desc": "金と結晶が出やすくなる", "w": 2, "rare": 1},
-	{"id": "jackpot", "name": "大当たり", "desc": "砕いた岩の6%がクレジット ×10", "w": 2, "rare": 1},
-	{"id": "interest", "name": "複利運用", "desc": "10秒ごとに所持クレジットの2%を得る", "w": 1, "rare": 1},
-	{"id": "quick", "name": "崩壊促進", "desc": "惑星が早く割れる（必要量 -8%）", "w": 1, "rare": 1, "max": 2},
-	{"id": "boss_time", "name": "時間延長", "desc": "巨大惑星の制限時間 +15秒", "w": 2, "rare": 0, "max": 3},
-	{"id": "overclock", "name": "過負荷運転", "desc": "全ツールの威力 ×2\n代償：強化費用 +25%", "w": 1, "rare": 2},
+## ブロックの種類。hp と value は岩を1とした倍率。mat は砕くと出る素材。
+enum B { ROCK, IRON, COPPER, GOLD, CRYSTAL, CORE, RELIC, CACHE, VOLATILE, HARD }
+const BLOCKS := {
+	B.ROCK: {"name": "岩", "hp": 1.0, "value": 1.0, "mat": ""},
+	B.IRON: {"name": "鉄鉱石", "hp": 1.3, "value": 1.5, "mat": "iron"},
+	B.COPPER: {"name": "銅鉱石", "hp": 1.4, "value": 2.0, "mat": "copper"},
+	B.GOLD: {"name": "金鉱石", "hp": 1.8, "value": 4.0, "mat": "gold"},
+	B.CRYSTAL: {"name": "結晶", "hp": 2.5, "value": 8.0, "mat": "crystal"},
+	B.CORE: {"name": "核", "hp": 2.0, "value": 3.0, "mat": ""},
+	B.RELIC: {"name": "遺物", "hp": 3.0, "value": 5.0, "mat": ""},
+	B.CACHE: {"name": "宝箱", "hp": 1.5, "value": 1.0, "mat": ""},
+	B.VOLATILE: {"name": "爆薬岩", "hp": 0.8, "value": 1.0, "mat": ""},
+	B.HARD: {"name": "硬い岩", "hp": 6.0, "value": 1.2, "mat": ""},
+}
+const BLOCK_COLORS := {
+	B.IRON: Color(0.72, 0.76, 0.86), B.COPPER: Color(0.92, 0.52, 0.28), B.GOLD: Color(1.0, 0.82, 0.22),
+	B.CRYSTAL: Color(0.82, 0.42, 1.0), B.CORE: Color(1.0, 0.42, 0.22), B.VOLATILE: Color(0.75, 0.16, 0.12),
+	B.HARD: Color(0.22, 0.22, 0.27),
+}
+
+## 惑星の特性（毎回ランダム）。rates はブロックの出やすさの倍率。
+const TRAITS := [
+	{"id": "plain", "name": "標準惑星", "desc": "特徴のない惑星", "rates": {}},
+	{"id": "iron", "name": "鉄の惑星", "desc": "鉄鉱石が2倍", "rates": {B.IRON: 2.0}},
+	{"id": "copper", "name": "銅の惑星", "desc": "銅鉱石が2倍", "rates": {B.COPPER: 2.0}},
+	{"id": "gold", "name": "黄金の惑星", "desc": "金鉱石が2倍", "rates": {B.GOLD: 2.0}},
+	{"id": "crystal", "name": "結晶の惑星", "desc": "結晶が2.5倍", "rates": {B.CRYSTAL: 2.5}},
+	{"id": "ruins", "name": "遺跡の惑星", "desc": "遺物と宝箱が多い", "rates": {B.RELIC: 2.5, B.CACHE: 2.0}},
+	{"id": "volcanic", "name": "火山惑星", "desc": "爆薬岩が多い。連鎖で一気に崩れる", "rates": {B.VOLATILE: 4.0}},
+	{"id": "shell", "name": "硬殻惑星", "desc": "硬い岩が多いが、鉱物も多い", "rates": {B.HARD: 3.0, B.IRON: 1.5, B.COPPER: 1.5, B.GOLD: 1.5}},
 ]
 
-## スキル（研究データで強化、帰還しても残る）。req は前提スキルとそのレベル。
+## 遺物：ブロックの中に眠っていて、砕くとその惑星の間だけ効果が出る（ランダム）
+const RELICS := [
+	{"id": "power", "name": "古代の動力炉", "desc": "全ツールの威力 ×1.5"},
+	{"id": "cr", "name": "黄金の秤", "desc": "獲得クレジット ×1.5"},
+	{"id": "drone", "name": "眠れる無人機", "desc": "採掘ドローン +2機"},
+	{"id": "tap", "name": "巨人の槌", "desc": "タップの威力 ×4"},
+	{"id": "cost", "name": "商人の印章", "desc": "ツールの強化費用 -15%"},
+	{"id": "mat", "name": "鉱脈の羅針盤", "desc": "素材の入手量 ×1.3"},
+]
+
+## スキルツリー。pos は（列, 段）。parent を Lv1 以上にすると開放。cost は Lv0 のときの素材。
 const SKILLS := [
-	{"id": "power", "name": "採掘効率", "desc": "全ツールの威力 +25%", "max": 30, "cost": 1.0, "growth": 1.35, "req": "", "rl": 0, "color": Color(1.0, 0.4, 0.35)},
-	{"id": "appraise", "name": "鉱石鑑定", "desc": "獲得クレジット +20%", "max": 30, "cost": 1.0, "growth": 1.35, "req": "", "rl": 0, "color": Color(1.0, 0.85, 0.3)},
-	{"id": "seed", "name": "初期資金", "desc": "出発時のクレジット ×5", "max": 8, "cost": 2.0, "growth": 1.8, "req": "", "rl": 0, "color": Color(0.5, 1.0, 0.55)},
-	{"id": "drones", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": 3.0, "growth": 2.0, "req": "power", "rl": 2, "color": Color(0.35, 0.9, 1.0)},
-	{"id": "tapper", "name": "精密掘削", "desc": "タップの威力 ×1.5", "max": 10, "cost": 2.0, "growth": 1.5, "req": "appraise", "rl": 2, "color": Color(1.0, 0.6, 0.3)},
-	{"id": "thrift", "name": "量産体制", "desc": "ツールの強化費用 -4%", "max": 10, "cost": 3.0, "growth": 1.6, "req": "seed", "rl": 2, "color": Color(0.6, 1.0, 0.8)},
-	{"id": "choices", "name": "選択肢の拡張", "desc": "強化カードの選択肢 +1", "max": 2, "cost": 12.0, "growth": 4.0, "req": "drones", "rl": 2, "color": Color(0.85, 0.5, 1.0)},
-	{"id": "reroll", "name": "再抽選", "desc": "惑星ごとにカードを引き直せる回数 +1", "max": 3, "cost": 8.0, "growth": 3.0, "req": "tapper", "rl": 3, "color": Color(0.95, 0.45, 0.9)},
-	{"id": "autobuy", "name": "自動強化", "desc": "一番安いツールを自動で強化", "max": 1, "cost": 15.0, "growth": 1.0, "req": "thrift", "rl": 3, "color": Color(0.4, 0.8, 1.0)},
-	{"id": "idle", "name": "放置報酬", "desc": "閉じている間の報酬 +25%・上限 +1時間", "max": 6, "cost": 6.0, "growth": 1.9, "req": "autobuy", "rl": 1, "color": Color(0.7, 0.75, 1.0)},
-	{"id": "boss", "name": "巨大惑星対策", "desc": "巨大惑星の制限時間 +10秒", "max": 4, "cost": 8.0, "growth": 2.2, "req": "choices", "rl": 1, "color": Color(1.0, 0.5, 0.5)},
-	{"id": "research", "name": "観測ログ", "desc": "帰還時の研究データ +15%", "max": 20, "cost": 10.0, "growth": 1.5, "req": "reroll", "rl": 1, "color": Color(0.5, 0.9, 1.0)},
+	{"id": "base", "name": "採掘基地", "desc": "すべての始まり", "max": 1, "cost": {}, "growth": 1.0, "parent": "", "pos": Vector2i(2, 0)},
+	# 列0：採掘力
+	{"id": "drone_pow", "name": "ドローン出力", "desc": "採掘ドローンの威力 +60%", "max": 15, "cost": {"iron": 48}, "growth": 1.45, "parent": "base", "pos": Vector2i(0, 1)},
+	{"id": "drone_count", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": {"copper": 72}, "growth": 2.2, "parent": "drone_pow", "pos": Vector2i(0, 2)},
+	{"id": "tap_pow", "name": "手掘り強化", "desc": "タップの威力 ×2", "max": 8, "cost": {"iron": 72, "copper": 36}, "growth": 1.7, "parent": "drone_count", "pos": Vector2i(0, 3)},
+	{"id": "resonance", "name": "共振増幅", "desc": "全ツールの威力 +30%", "max": 20, "cost": {"gold": 48}, "growth": 1.4, "parent": "tap_pow", "pos": Vector2i(0, 4)},
+	{"id": "overdrive", "name": "過負荷運転", "desc": "全ツールの威力 ×2", "max": 5, "cost": {"crystal": 60}, "growth": 2.0, "parent": "resonance", "pos": Vector2i(0, 5)},
+	# 列1：ツールの解放
+	{"id": "cutter", "name": "回転カッター", "desc": "回転カッターを解放", "max": 1, "cost": {"iron": 144}, "growth": 1.0, "parent": "base", "pos": Vector2i(1, 1)},
+	{"id": "laser", "name": "掃射レーザー", "desc": "掃射レーザーを解放", "max": 1, "cost": {"iron": 360, "copper": 180}, "growth": 1.0, "parent": "cutter", "pos": Vector2i(1, 2)},
+	{"id": "bomb", "name": "重力爆雷", "desc": "重力爆雷を解放", "max": 1, "cost": {"copper": 480, "gold": 120}, "growth": 1.0, "parent": "laser", "pos": Vector2i(1, 3)},
+	{"id": "lance", "name": "コアランス", "desc": "コアランスを解放", "max": 1, "cost": {"gold": 480, "crystal": 96}, "growth": 1.0, "parent": "bomb", "pos": Vector2i(1, 4)},
+	{"id": "swarm", "name": "ナノスウォーム", "desc": "ナノスウォームを解放", "max": 1, "cost": {"gold": 1440, "crystal": 480}, "growth": 1.0, "parent": "lance", "pos": Vector2i(1, 5)},
+	{"id": "mastery", "name": "ツール熟練", "desc": "Lv25ごとの倍率 ×2 → +0.25", "max": 4, "cost": {"crystal": 240}, "growth": 2.0, "parent": "swarm", "pos": Vector2i(1, 6)},
+	# 列2：経済
+	{"id": "cr_gain", "name": "鑑定術", "desc": "獲得クレジット +35%", "max": 20, "cost": {"iron": 60}, "growth": 1.4, "parent": "base", "pos": Vector2i(2, 1)},
+	{"id": "discount", "name": "量産体制", "desc": "ツールの強化費用 -5%", "max": 10, "cost": {"copper": 96}, "growth": 1.55, "parent": "cr_gain", "pos": Vector2i(2, 2)},
+	{"id": "start_cr", "name": "初期資金", "desc": "惑星に着いたときのクレジット ×4", "max": 6, "cost": {"gold": 72}, "growth": 2.0, "parent": "discount", "pos": Vector2i(2, 3)},
+	{"id": "offline", "name": "放置報酬", "desc": "閉じている間の報酬 +30%・上限 +1時間", "max": 6, "cost": {"gold": 96}, "growth": 1.8, "parent": "start_cr", "pos": Vector2i(2, 4)},
+	{"id": "interest", "name": "複利運用", "desc": "10秒ごとに所持クレジットの1%を得る", "max": 3, "cost": {"crystal": 120}, "growth": 2.5, "parent": "offline", "pos": Vector2i(2, 5)},
+	# 列3：探査
+	{"id": "mat_find", "name": "鉱脈探知", "desc": "素材の入手量 +10%", "max": 15, "cost": {"iron": 72, "copper": 24}, "growth": 1.45, "parent": "base", "pos": Vector2i(3, 1)},
+	{"id": "vision", "name": "透視スキャン", "desc": "埋まった遺物と宝箱が光って見える", "max": 1, "cost": {"copper": 240}, "growth": 1.0, "parent": "mat_find", "pos": Vector2i(3, 2)},
+	{"id": "relic_luck", "name": "遺物の勘", "desc": "遺物と宝箱が出やすくなる +40%", "max": 5, "cost": {"gold": 120}, "growth": 1.8, "parent": "vision", "pos": Vector2i(3, 3)},
+	{"id": "refine", "name": "精錬", "desc": "素材が2倍になる確率 +10%", "max": 5, "cost": {"gold": 144, "crystal": 36}, "growth": 1.8, "parent": "relic_luck", "pos": Vector2i(3, 4)},
+	{"id": "core_bonus", "name": "核の回収", "desc": "惑星を割ったとき、集めた素材の +20% を追加で得る", "max": 5, "cost": {"crystal": 144}, "growth": 2.0, "parent": "refine", "pos": Vector2i(3, 5)},
+	# 列4：自動化と航路
+	{"id": "auto_tap", "name": "自動タップ", "desc": "毎秒1回、自動で手掘りする", "max": 5, "cost": {"iron": 120}, "growth": 1.9, "parent": "base", "pos": Vector2i(4, 1)},
+	{"id": "auto_buy", "name": "自動強化", "desc": "一番安いツールを自動で強化", "max": 1, "cost": {"copper": 300, "iron": 300}, "growth": 1.0, "parent": "auto_tap", "pos": Vector2i(4, 2)},
+	{"id": "blast", "name": "誘爆制御", "desc": "爆薬岩の爆発の範囲と威力が上がる", "max": 5, "cost": {"gold": 96}, "growth": 1.8, "parent": "auto_buy", "pos": Vector2i(4, 3)},
+	{"id": "navigator", "name": "航路選択", "desc": "次の惑星を候補から選べる（Lv2で3択）", "max": 2, "cost": {"crystal": 72}, "growth": 3.0, "parent": "blast", "pos": Vector2i(4, 4)},
 ]
+const BRANCHES := ["採掘力", "ツール", "経済", "探査", "自動化"]
 
-# --- ラン ---
+# --- 惑星（ラン） ---
 var run_seed: int = 0
-var credits: float = 0.0
-var total_earned: float = 0.0
-var tool_levels := {}
 var planet: int = 1
-var best_planet_run: int = 1
-var cards := {}  # id -> 回数（tool_boost は "tool_boost:drone" など）
-var income_rate: float = 0.0  # 直近の毎秒獲得量（放置報酬の計算に使う）
+var trait_id: String = "plain"
+var credits: float = 0.0
+var tool_levels := {}
+var relics: Array = []
+var mats_this_planet := {}
+var planet_time: float = 0.0
+var saved_hp := PackedFloat32Array()
+var income_rate: float = 0.0
+var next_traits: Array = []
 
-# --- メタ ---
-var data: float = 0.0
+# --- 永続 ---
+var mats := {}
 var skills := {}
 var best_planet: int = 1
-var prestiges: int = 0
 var offline_gain: float = 0.0
 var offline_secs: float = 0.0
+
+## main.gd が保存の直前に掘った跡を渡すための関数
+var hp_provider: Callable
 
 var _save_t: float = 0.0
 var _interest_t: float = 0.0
@@ -90,30 +135,34 @@ var _income_t: float = 0.0
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	reset_run()
+	for m in MATS:
+		mats[m] = 0.0
+	skills["base"] = 1
+	start_planet(1, "plain")
 	_load()
 
 
 func _process(delta: float) -> void:
 	if get_tree().paused:
 		return
+	planet_time += delta
 	_income_t += delta
 	if _income_t >= 5.0:
 		income_rate = lerpf(income_rate, _income_acc / _income_t, 0.5)
 		_income_acc = 0.0
 		_income_t = 0.0
-	if card_count("interest") > 0:
+	if skill_level("interest") > 0:
 		_interest_t += delta
 		if _interest_t >= 10.0:
 			_interest_t = 0.0
-			earn(credits * 0.02 * card_count("interest"), false)
+			earn(credits * 0.01 * skill_level("interest"), false)
 	_save_t += delta
 	if _save_t >= 5.0:
 		_save_t = 0.0
 		save()
 
 
-# ---------------------------------------------------------------- 数字の表示
+# ---------------------------------------------------------------- 数字
 
 
 const SUFFIX := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah"]
@@ -133,66 +182,111 @@ static func fmt(x: float) -> String:
 	return "%.2f%s" % [x, SUFFIX[e]]
 
 
-# ---------------------------------------------------------------- ラン
+# ---------------------------------------------------------------- 惑星
 
 
-func reset_run() -> void:
+func start_planet(p: int, t: String) -> void:
+	planet = p
+	trait_id = t
 	run_seed = randi()
-	credits = 15.0 * pow(5.0, skill_level("seed"))
-	total_earned = 0.0
+	credits = 20.0 * pow(4.0, skill_level("start_cr")) * pow(planet_mult(), 0.5)
 	tool_levels = {}
-	for t in TOOLS:
-		tool_levels[t["id"]] = 0
+	for td in TOOLS:
+		tool_levels[td["id"]] = 0
 	tool_levels["drone"] = 1
-	planet = 1
-	best_planet_run = 1
-	cards = {}
+	relics = []
+	mats_this_planet = {}
+	for m in MATS:
+		mats_this_planet[m] = 0.0
+	planet_time = 0.0
+	saved_hp = PackedFloat32Array()
 	income_rate = 0.0
+	next_traits = []
 
 
-func galaxy() -> int:
-	return (planet - 1) / PLANETS_PER_GALAXY + 1
+func trait_def(id: String = "") -> Dictionary:
+	var k := trait_id if id == "" else id
+	for t in TRAITS:
+		if t["id"] == k:
+			return t
+	return TRAITS[0]
 
 
-func planet_in_galaxy() -> int:
-	return (planet - 1) % PLANETS_PER_GALAXY + 1
+## 惑星ごとの硬さ。1つ進むごとに 60 倍。
+func planet_mult() -> float:
+	return pow(60.0, planet - 1)
 
 
-func is_boss() -> bool:
-	return planet_in_galaxy() == PLANETS_PER_GALAXY
+## 深さ（0=表面, 1=中心）ごとの1マスの耐久。深いほど指数的に硬い。
+func cell_hp(depth: float) -> float:
+	return 2.0 * planet_mult() * pow(10.0, depth * 5.2)
 
 
-func boss_time() -> float:
-	return BOSS_TIME + 10.0 * skill_level("boss") + 15.0 * card_count("boss_time")
+func cell_value(depth: float) -> float:
+	# 先の惑星ほど「硬さの割に安い」。スキルで地力を上げないと時間がかかる
+	return cell_hp(depth) * 0.55 * cr_mult() / pow(planet_mult(), 0.45)
 
 
-## 1マスの基本耐久。惑星ごとに 1.5 倍で硬くなる。
-func cell_hp() -> float:
-	return 1.2 * pow(1.5, planet - 1) * (2.5 if is_boss() else 1.0)
-
-
-## 1マスを砕いたときの基本クレジット。
-func cell_value() -> float:
-	return 0.9 * pow(1.47, planet - 1) * value_mult() * (2.0 if is_boss() else 1.0)
-
-
-func clear_ratio() -> float:
-	return CLEAR_RATIO - 0.08 * card_count("quick")
-
-
-func rich_ores() -> bool:
-	return card_count("rich") > 0
-
-
-func value_mult() -> float:
-	return pow(1.2, skill_level("appraise")) * pow(1.35, card_count("value"))
+func cr_mult() -> float:
+	return pow(1.35, skill_level("cr_gain")) * pow(1.5, relic_count("cr"))
 
 
 func earn(amount: float, track: bool = true) -> void:
 	credits += amount
-	total_earned += amount
 	if track:
 		_income_acc += amount
+
+
+func mat_mult() -> float:
+	return (1.0 + 0.1 * skill_level("mat_find")) * pow(1.3, relic_count("mat"))
+
+
+func add_mat(m: String, amount: float) -> float:
+	var a := amount * mat_mult()
+	if randf() < 0.1 * skill_level("refine"):
+		a *= 2.0
+	mats[m] = float(mats.get(m, 0.0)) + a
+	mats_this_planet[m] = float(mats_this_planet.get(m, 0.0)) + a
+	return a
+
+
+func relic_count(id: String) -> int:
+	return relics.count(id)
+
+
+func add_random_relic() -> Dictionary:
+	var r: Dictionary = RELICS[randi() % RELICS.size()]
+	relics.append(String(r["id"]))
+	changed.emit()
+	return r
+
+
+func relic_luck() -> float:
+	return 1.0 + 0.4 * skill_level("relic_luck")
+
+
+## 惑星を割ったときの処理。追加の素材を返す。
+func finish_planet() -> Dictionary:
+	var extra := {}
+	var k := 0.2 * skill_level("core_bonus")
+	for m in MATS:
+		var a := float(mats_this_planet.get(m, 0.0)) * k
+		if a > 0.0:
+			mats[m] = float(mats[m]) + a
+			extra[m] = a
+	best_planet = maxi(best_planet, planet + 1)
+	return extra
+
+
+## 次の惑星の候補（航路選択スキルで増える）
+func roll_next_traits() -> Array:
+	var n := 1 + skill_level("navigator")
+	var pool := TRAITS.duplicate()
+	pool.shuffle()
+	next_traits = []
+	for i in mini(n, pool.size()):
+		next_traits.append(String(pool[i]["id"]))
+	return next_traits
 
 
 # ---------------------------------------------------------------- ツール
@@ -205,22 +299,30 @@ func tool_def(id: String) -> Dictionary:
 	return {}
 
 
+func tool_unlocked(id: String) -> bool:
+	return id == "drone" or skill_level(id) > 0
+
+
 func tool_level(id: String) -> int:
 	return int(tool_levels.get(id, 0))
 
 
 func dps_mult() -> float:
-	var m := pow(1.25, skill_level("power")) * pow(1.3, card_count("all_dps"))
-	m *= pow(2.0, card_count("overclock"))
-	return m
+	return pow(1.3, skill_level("resonance")) * pow(2.0, skill_level("overdrive")) * pow(1.5, relic_count("power"))
+
+
+func milestone_mult() -> float:
+	return 2.0 + 0.25 * skill_level("mastery")
 
 
 func tool_dps_at(id: String, lv: int) -> float:
 	if lv <= 0:
 		return 0.0
 	var t := tool_def(id)
-	var d := float(t["dps"]) * lv * pow(2.0, lv / 25)
-	return d * dps_mult() * pow(1.6, card_count("tool_boost:" + id))
+	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult()
+	if id == "drone":
+		d *= 1.0 + 0.6 * skill_level("drone_pow")
+	return d
 
 
 func tool_dps(id: String) -> float:
@@ -235,23 +337,18 @@ func total_dps() -> float:
 
 
 func cost_mult() -> float:
-	var m := pow(0.96, skill_level("thrift")) * pow(0.88, card_count("discount"))
-	m *= pow(1.25, card_count("overclock"))
-	return m
+	return pow(0.95, skill_level("discount")) * pow(0.85, relic_count("cost"))
 
 
-## Lv lv から n 段強化する費用。
 func upgrade_cost(id: String, n: int = 1) -> float:
 	var t := tool_def(id)
-	var lv := tool_level(id)
 	var g := float(t["growth"])
-	var base := float(t["cost"]) * cost_mult() * pow(g, lv)
+	var base := float(t["cost"]) * cost_mult() * pow(g, tool_level(id))
 	if n == 1:
 		return base
 	return base * (pow(g, n) - 1.0) / (g - 1.0)
 
 
-## いまのクレジットで買える段数（上限 cap、0 なら無制限）。
 func affordable(id: String, cap: int) -> int:
 	var n := 0
 	while (cap == 0 or n < cap) and n < 1000:
@@ -262,7 +359,7 @@ func affordable(id: String, cap: int) -> int:
 
 
 func buy_tool(id: String, n: int = 1) -> bool:
-	if n <= 0:
+	if n <= 0 or not tool_unlocked(id):
 		return false
 	var c := upgrade_cost(id, n)
 	if c > credits:
@@ -273,104 +370,19 @@ func buy_tool(id: String, n: int = 1) -> bool:
 	return true
 
 
-## 次に2倍になるレベルまでの進み具合（0〜1）
 func milestone_frac(id: String) -> float:
 	return float(tool_level(id) % 25) / 25.0
 
 
 func tap_damage() -> float:
-	return maxf(2.0, total_dps() * 0.06) * pow(1.5, skill_level("tapper")) * pow(2.5, card_count("tap"))
+	return maxf(3.0, total_dps() * 0.05) * pow(2.0, skill_level("tap_pow")) * pow(4.0, relic_count("tap"))
 
 
 func drone_count() -> int:
-	return 1 + skill_level("drones")
+	return 1 + skill_level("drone_count") + 2 * relic_count("drone")
 
 
-# ---------------------------------------------------------------- カード
-
-
-func card_count(id: String) -> int:
-	return int(cards.get(id, 0))
-
-
-func card_choices() -> int:
-	return 3 + skill_level("choices")
-
-
-func rerolls() -> int:
-	return skill_level("reroll")
-
-
-## 強化カードを n 枚引く。返り値の各要素：{"key", "name", "desc", "rare"}
-func roll_cards(n: int) -> Array:
-	var pool: Array = []
-	for c in CARDS:
-		var id := String(c["id"])
-		if c.has("max") and card_count(id) >= int(c["max"]):
-			continue
-		if id == "boss_time" and planet_in_galaxy() < 3:
-			continue
-		if id == "tool_boost":
-			for t in TOOLS:
-				if tool_level(String(t["id"])) > 0:
-					pool.append({"key": "tool_boost:" + String(t["id"]), "name": String(c["name"]) % t["name"], "desc": String(c["desc"]) % t["name"], "rare": 0, "w": 2.0, "color": t["color"]})
-			continue
-		pool.append({"key": id, "name": c["name"], "desc": c["desc"], "rare": c["rare"], "w": float(c["w"])})
-	var out: Array = []
-	while out.size() < n and not pool.is_empty():
-		var total := 0.0
-		for c in pool:
-			total += float(c["w"])
-		var r := randf() * total
-		for i in pool.size():
-			r -= float(pool[i]["w"])
-			if r <= 0.0:
-				out.append(pool[i])
-				pool.remove_at(i)
-				break
-	return out
-
-
-func take_card(key: String) -> void:
-	cards[key] = card_count(key) + 1
-	changed.emit()
-
-
-## いまのランで取ったカードの一覧（表示用）
-func card_summary() -> Array:
-	var out: Array = []
-	for k in cards:
-		var name := String(k)
-		if name.begins_with("tool_boost:"):
-			name = "%s 強化" % tool_def(name.trim_prefix("tool_boost:"))["name"]
-		else:
-			for c in CARDS:
-				if c["id"] == k:
-					name = String(c["name"])
-		out.append("%s ×%d" % [name, int(cards[k])])
-	return out
-
-
-# ---------------------------------------------------------------- 帰還とスキル
-
-
-## いま帰還すると得られる研究データ
-func prestige_gain() -> int:
-	var p := best_planet_run - 1
-	if p < 5:
-		return 0
-	var g := pow(float(p) / 5.0, 1.8) * 2.0
-	g *= pow(1.15, skill_level("research"))
-	return int(g)
-
-
-func prestige() -> void:
-	data += prestige_gain()
-	prestiges += 1
-	best_planet = maxi(best_planet, best_planet_run)
-	reset_run()
-	save()
-	changed.emit()
+# ---------------------------------------------------------------- スキルツリー
 
 
 func skill_def(id: String) -> Dictionary:
@@ -384,36 +396,55 @@ func skill_level(id: String) -> int:
 	return int(skills.get(id, 0))
 
 
-func skill_cost(id: String) -> float:
+func skill_cost(id: String) -> Dictionary:
 	var s := skill_def(id)
-	return ceilf(float(s["cost"]) * pow(float(s["growth"]), skill_level(id)))
+	var out := {}
+	var g := pow(float(s["growth"]), skill_level(id))
+	for m in s["cost"]:
+		out[m] = ceilf(float(s["cost"][m]) * g)
+	return out
 
 
 func skill_open(id: String) -> bool:
-	var s := skill_def(id)
-	var req := String(s["req"])
-	return req == "" or skill_level(req) >= int(s["rl"])
+	var p := String(skill_def(id)["parent"])
+	return p == "" or skill_level(p) > 0
 
 
 func skill_maxed(id: String) -> bool:
 	return skill_level(id) >= int(skill_def(id)["max"])
 
 
+func can_afford_mats(cost: Dictionary) -> bool:
+	for m in cost:
+		if float(mats.get(m, 0.0)) + 0.001 < float(cost[m]):
+			return false
+	return true
+
+
 func can_buy_skill(id: String) -> bool:
-	return skill_open(id) and not skill_maxed(id) and data >= skill_cost(id)
+	return skill_open(id) and not skill_maxed(id) and can_afford_mats(skill_cost(id))
 
 
 func buy_skill(id: String) -> bool:
 	if not can_buy_skill(id):
 		return false
-	data -= skill_cost(id)
+	var c := skill_cost(id)
+	for m in c:
+		mats[m] = float(mats[m]) - float(c[m])
 	skills[id] = skill_level(id) + 1
 	save()
 	changed.emit()
 	return true
 
 
-## 一番安いスキルから、買えるだけ買う。
+func cost_text(cost: Dictionary) -> String:
+	var parts: PackedStringArray = []
+	for m in cost:
+		parts.append("%s %s" % [MAT_NAMES[m], fmt(float(cost[m]))])
+	return "  ".join(parts)
+
+
+## 素材の合計が一番少ないスキルから、買えるだけ買う。
 func buy_all_skills() -> int:
 	var n := 0
 	while n < 500:
@@ -421,9 +452,14 @@ func buy_all_skills() -> int:
 		var best_c := INF
 		for s in SKILLS:
 			var id := String(s["id"])
-			if can_buy_skill(id) and skill_cost(id) < best_c:
+			if not can_buy_skill(id):
+				continue
+			var tot := 0.0
+			for m in skill_cost(id):
+				tot += float(skill_cost(id)[m])
+			if tot < best_c:
 				best = id
-				best_c = skill_cost(id)
+				best_c = tot
 		if best == "":
 			break
 		buy_skill(best)
@@ -435,20 +471,23 @@ func buy_all_skills() -> int:
 
 
 func save() -> void:
+	if hp_provider.is_valid():
+		saved_hp = hp_provider.call()
 	var cfg := ConfigFile.new()
 	cfg.set_value("run", "seed", run_seed)
-	cfg.set_value("run", "credits", credits)
-	cfg.set_value("run", "total_earned", total_earned)
-	cfg.set_value("run", "tools", tool_levels)
 	cfg.set_value("run", "planet", planet)
-	cfg.set_value("run", "best_planet_run", best_planet_run)
-	cfg.set_value("run", "cards", cards)
+	cfg.set_value("run", "trait", trait_id)
+	cfg.set_value("run", "credits", credits)
+	cfg.set_value("run", "tools", tool_levels)
+	cfg.set_value("run", "relics", relics)
+	cfg.set_value("run", "mats_this_planet", mats_this_planet)
+	cfg.set_value("run", "time", planet_time)
+	cfg.set_value("run", "hp", saved_hp)
 	cfg.set_value("run", "income_rate", income_rate)
-	cfg.set_value("meta", "data", data)
+	cfg.set_value("meta", "mats", mats)
 	cfg.set_value("meta", "skills", skills)
 	cfg.set_value("meta", "best_planet", best_planet)
-	cfg.set_value("meta", "prestiges", prestiges)
-	cfg.set_value("meta", "time", Time.get_unix_time_from_system())
+	cfg.set_value("meta", "saved_at", Time.get_unix_time_from_system())
 	cfg.save(SAVE_PATH)
 
 
@@ -457,23 +496,29 @@ func _load() -> void:
 	if cfg.load(SAVE_PATH) != OK:
 		return
 	run_seed = int(cfg.get_value("run", "seed", run_seed))
+	planet = int(cfg.get_value("run", "planet", 1))
+	trait_id = String(cfg.get_value("run", "trait", "plain"))
 	credits = float(cfg.get_value("run", "credits", credits))
-	total_earned = float(cfg.get_value("run", "total_earned", 0.0))
 	var tl: Dictionary = cfg.get_value("run", "tools", {})
 	for k in tl:
 		tool_levels[k] = int(tl[k])
-	planet = int(cfg.get_value("run", "planet", 1))
-	best_planet_run = int(cfg.get_value("run", "best_planet_run", planet))
-	cards = cfg.get_value("run", "cards", {})
+	relics = cfg.get_value("run", "relics", [])
+	var mtp: Dictionary = cfg.get_value("run", "mats_this_planet", {})
+	for k in mtp:
+		mats_this_planet[k] = float(mtp[k])
+	planet_time = float(cfg.get_value("run", "time", 0.0))
+	saved_hp = cfg.get_value("run", "hp", PackedFloat32Array())
 	income_rate = float(cfg.get_value("run", "income_rate", 0.0))
-	data = float(cfg.get_value("meta", "data", 0.0))
-	skills = cfg.get_value("meta", "skills", {})
+	var mm: Dictionary = cfg.get_value("meta", "mats", {})
+	for k in mm:
+		mats[k] = float(mm[k])
+	skills = cfg.get_value("meta", "skills", {"base": 1})
+	skills["base"] = 1
 	best_planet = int(cfg.get_value("meta", "best_planet", 1))
-	prestiges = int(cfg.get_value("meta", "prestiges", 0))
-	var t := float(cfg.get_value("meta", "time", 0.0))
+	var t := float(cfg.get_value("meta", "saved_at", 0.0))
 	var away := Time.get_unix_time_from_system() - t
 	if t > 0.0 and away > 60.0:
-		offline_secs = minf(away, (OFFLINE_CAP_H + skill_level("idle")) * 3600.0)
-		offline_gain = income_rate * offline_secs * OFFLINE_RATE * pow(1.25, skill_level("idle"))
+		offline_secs = minf(away, (OFFLINE_CAP_H + skill_level("offline")) * 3600.0)
+		offline_gain = income_rate * offline_secs * OFFLINE_RATE * pow(1.3, skill_level("offline"))
 		if offline_gain > 0.0:
 			earn(offline_gain, false)
