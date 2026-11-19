@@ -1,403 +1,321 @@
 extends Node
-## ラン全体の状態（資源・建物キット・燃料・セクター・レベル・カード）と、
-## ランをまたいで残るスキルツリー（メタ進行）を保持する Autoload。
+## ゲームの状態（Autoload）。
+## ラン：クレジット、ツールのレベル、いまの惑星、強化カード。帰還（プレステージ）でリセットされる。
+## メタ：研究データとスキル。帰還しても残る。どちらも保存し、閉じていた間の放置報酬も計算する。
 
-signal run_over(reason: String, victory: bool)
+signal changed
 
-const FINAL_SECTOR := 10
-const SAVE_PATH := "user://drift_miner.cfg"
+const SAVE_PATH := "user://drift_miner_idle.cfg"
+const PLANETS_PER_GALAXY := 5
+const BOSS_TIME := 40.0
+const CLEAR_RATIO := 0.85
+const OFFLINE_RATE := 0.5
+const OFFLINE_CAP_H := 2.0
 
-## 不安定化：セクター到着から猶予秒数の後、燃料消費が毎秒 RAMP ずつ増える（上限 MAX）。
-const INSTABILITY_GRACE := 150.0
-const INSTABILITY_RAMP := 0.012
-const INSTABILITY_MAX := 3.0
-
-const ITEMS := {
-	"iron_ore": {"name": "鉄鉱石", "short": "鉄鉱", "color": Color(0.72, 0.75, 0.85)},
-	"copper_ore": {"name": "銅鉱石", "short": "銅鉱", "color": Color(0.95, 0.55, 0.3)},
-	"crystal": {"name": "結晶", "short": "結晶", "color": Color(0.9, 0.45, 1.0)},
-	"plate": {"name": "鉄板", "short": "鉄板", "color": Color(0.85, 0.88, 0.95)},
-	"wire": {"name": "銅線", "short": "銅線", "color": Color(1.0, 0.7, 0.4)},
-	"circuit": {"name": "回路", "short": "回路", "color": Color(0.45, 1.0, 0.6)},
-	"qcore": {"name": "量子コア", "short": "量子", "color": Color(0.5, 0.85, 1.0)},
-}
-const RAW_ITEMS := ["iron_ore", "copper_ore", "crystal"]
-const MADE_ITEMS := ["plate", "wire", "circuit", "qcore"]
-const XP_VALUE := {"plate": 1.0, "wire": 0.5, "circuit": 4.0, "qcore": 15.0}
-
-## 建物。recipe があるものは母船の補給圏内に自動で建つ工場。
-const BUILDINGS := {
-	"miner": {"name": "採掘機", "cost": {"plate": 4}},
-	"hub": {"name": "ドローンハブ", "cost": {}},
-	"smelter": {"name": "製鉄炉", "recipe": {"in": {"iron_ore": 2}, "out": {"plate": 1}, "time": 2.0}},
-	"wiremill": {"name": "伸線機", "recipe": {"in": {"copper_ore": 1}, "out": {"wire": 2}, "time": 2.0}},
-	"assembler": {"name": "組立機", "recipe": {"in": {"plate": 1, "wire": 3}, "out": {"circuit": 1}, "time": 4.0}},
-	"quantum": {"name": "量子炉", "recipe": {"in": {"crystal": 2, "circuit": 1}, "out": {"qcore": 1}, "time": 6.0}},
-}
-const FACTORIES := ["smelter", "wiremill", "assembler", "quantum"]
-
-## 母艦のスキルツリー（ランをまたいで残る）。req は前提スキル。
-const SKILLS := [
-	{"id": "start_plate", "tier": 1, "name": "初期資材", "desc": "鉄板 +20 を持って出撃", "cost": 5, "req": ""},
-	{"id": "drill", "tier": 1, "name": "強化ドリル", "desc": "自機の採掘 +50%", "cost": 5, "req": ""},
-	{"id": "start_fuel", "tier": 1, "name": "予備タンク", "desc": "最大燃料 +25", "cost": 6, "req": ""},
-	{"id": "smelt_line", "tier": 2, "name": "製鉄ライン", "desc": "製鉄炉 +1 で出撃", "cost": 10, "req": "start_plate"},
-	{"id": "mass_miner", "tier": 2, "name": "採掘機の量産", "desc": "採掘機 +3、設置上限 +3", "cost": 10, "req": "drill"},
-	{"id": "forecast", "tier": 2, "name": "隕石予報", "desc": "隕石の予告 2.5秒→4秒", "cost": 8, "req": "start_fuel"},
-	{"id": "assembly_line", "tier": 3, "name": "組立ライン", "desc": "組立機・伸線機 +1 で出撃", "cost": 16, "req": "smelt_line"},
-	{"id": "drones", "tier": 3, "name": "ドローン増設", "desc": "各ハブのドローン +1", "cost": 16, "req": "mass_miner"},
-	{"id": "stability", "tier": 3, "name": "安定航法", "desc": "不安定化の猶予 +45秒", "cost": 14, "req": "forecast"},
-	{"id": "quantum", "tier": 4, "name": "量子炉の設計図", "desc": "カードに量子炉が出る（セクター5〜で必須）", "cost": 22, "req": "assembly_line"},
-	{"id": "factory_speed", "tier": 4, "name": "高効率工場", "desc": "全工場の速度 +25%", "cost": 24, "req": "drones"},
-	{"id": "more_cards", "tier": 4, "name": "選択肢の拡張", "desc": "強化カードの選択肢 +1", "cost": 22, "req": "stability"},
-	{"id": "start_quantum", "tier": 5, "name": "量子ライン", "desc": "量子炉 +1 で出撃", "cost": 35, "req": "quantum"},
-	{"id": "data_boost", "tier": 5, "name": "観測ログ", "desc": "得られる研究データ +50%", "cost": 30, "req": "factory_speed"},
-	{"id": "reroll", "tier": 5, "name": "再抽選", "desc": "カード選択時に1回引き直せる", "cost": 28, "req": "more_cards"},
+## 採掘ツール。dps は Lv1 のときの毎秒ダメージ。Lv25 ごとに2倍。
+const TOOLS := [
+	{"id": "drone", "name": "採掘ドローン", "desc": "惑星のまわりを回り、表面を削る", "dps": 3.0, "cost": 8.0, "growth": 1.12, "color": Color(0.35, 0.9, 1.0)},
+	{"id": "cutter", "name": "回転カッター", "desc": "地表を転がりながら周囲を切り崩す", "dps": 22.0, "cost": 120.0, "growth": 1.13, "color": Color(1.0, 0.62, 0.25)},
+	{"id": "laser", "name": "掃射レーザー", "desc": "衛星から地表をなぎ払う貫通ビーム", "dps": 160.0, "cost": 2200.0, "growth": 1.14, "color": Color(1.0, 0.3, 0.4)},
+	{"id": "bomb", "name": "重力爆雷", "desc": "一定間隔で落ちて広い範囲を砕く", "dps": 1200.0, "cost": 4.0e4, "growth": 1.15, "color": Color(0.8, 0.45, 1.0)},
+	{"id": "lance", "name": "コアランス", "desc": "中心核へまっすぐ穴を掘り進む", "dps": 9500.0, "cost": 8.0e5, "growth": 1.16, "color": Color(0.45, 1.0, 0.5)},
+	{"id": "swarm", "name": "ナノスウォーム", "desc": "無数の微小機械が全面を少しずつ食べる", "dps": 80000.0, "cost": 1.6e7, "growth": 1.17, "color": Color(1.0, 0.9, 0.35)},
 ]
 
-## ラン中の強化カード（レベルアップとワープ時に選ぶ）
+## 鉱石の種類。hp と value は岩を1とした倍率。
+const ORES := [
+	{"name": "岩", "hp": 1.0, "value": 1.0},
+	{"name": "鉄", "hp": 1.2, "value": 2.0},
+	{"name": "銅", "hp": 1.3, "value": 3.0},
+	{"name": "金", "hp": 1.6, "value": 8.0},
+	{"name": "結晶", "hp": 2.5, "value": 20.0},
+	{"name": "核", "hp": 3.0, "value": 6.0},
+]
+const ORE_COLORS := [Color(0, 0, 0), Color(0.75, 0.78, 0.85), Color(0.95, 0.55, 0.3), Color(1.0, 0.85, 0.25), Color(0.85, 0.45, 1.0), Color(1.0, 0.45, 0.25)]
+
+## 惑星を割るたびに3枚から1枚選ぶ強化カード（ランの間だけ有効）
 const CARDS := [
-	{"id": "add_smelter", "name": "製鉄炉 増設", "desc": "製鉄炉が1台増える", "w": 3},
-	{"id": "add_wiremill", "name": "伸線機 増設", "desc": "伸線機が1台増える", "w": 3},
-	{"id": "add_assembler", "name": "組立機 増設", "desc": "組立機が1台増える", "w": 3},
-	{"id": "add_quantum", "name": "量子炉 増設", "desc": "量子炉が1台増える", "w": 3, "skill": "quantum"},
-	{"id": "add_miners", "name": "採掘機パック", "desc": "採掘機 +3、設置上限 +3", "w": 3},
-	{"id": "add_hub", "name": "ドローンハブ 増設", "desc": "ドローンハブが1台増える", "w": 2},
-	{"id": "smelt_speed", "name": "高温炉", "desc": "製鉄炉の速度 +40%", "w": 2},
-	{"id": "wire_speed", "name": "精密伸線", "desc": "伸線機の速度 +40%", "w": 2},
-	{"id": "asm_speed", "name": "自動組立", "desc": "組立機の速度 +40%", "w": 2},
-	{"id": "q_speed", "name": "量子共鳴", "desc": "量子炉の速度 +50%", "w": 2, "skill": "quantum"},
-	{"id": "miner_rate", "name": "採掘機の改良", "desc": "採掘機の速度 +40%", "w": 2},
-	{"id": "storage", "name": "大型ホッパー", "desc": "採掘機の貯蔵 +60%", "w": 1},
-	{"id": "drone_speed", "name": "高速ドローン", "desc": "ドローンの速度 +50%", "w": 2},
-	{"id": "drone_carry", "name": "積載拡張", "desc": "ドローンの積載 +50%", "w": 2},
-	{"id": "ship_drill", "name": "掘削レーザー", "desc": "自機の採掘 +60%", "w": 2},
-	{"id": "fuel_eff", "name": "省エネ推進器", "desc": "燃料消費 -20%", "w": 2},
-	{"id": "ice_refinery", "name": "氷精製炉", "desc": "氷→燃料の変換 2倍", "w": 1},
-	{"id": "big_tank", "name": "大型タンク", "desc": "最大燃料 +40（全回復）", "w": 1},
-	{"id": "scanner", "name": "広域スキャナー", "desc": "探索範囲 +50%", "w": 1},
-	{"id": "stabilizer", "name": "安定化装置", "desc": "不安定化の猶予 +30秒", "w": 1},
-	{"id": "oracle", "name": "予知スキャナー", "desc": "ゲートの位置が最初から分かる", "w": 1, "once": true},
-	{"id": "overdrive", "name": "オーバードライブ", "desc": "全工場 +35%\n代償：燃料消費 +20%", "w": 1},
-	{"id": "crystal_drill", "name": "結晶ドリル", "desc": "採掘機が結晶も全速で掘る", "w": 2, "skill": "quantum", "once": true},
-	{"id": "salvager", "name": "回収業者", "desc": "漂流物の中身 2倍", "w": 1, "once": true},
+	{"id": "tool_boost", "name": "%s 強化", "desc": "%sの威力 ×1.6", "w": 6, "rare": 0},
+	{"id": "all_dps", "name": "総合出力", "desc": "全ツールの威力 +30%", "w": 4, "rare": 0},
+	{"id": "value", "name": "鉱石鑑定", "desc": "獲得クレジット +35%", "w": 4, "rare": 0},
+	{"id": "discount", "name": "値切り交渉", "desc": "ツールの強化費用 -12%", "w": 3, "rare": 0},
+	{"id": "tap", "name": "手掘りの達人", "desc": "タップの威力 ×2.5", "w": 2, "rare": 0},
+	{"id": "rich", "name": "鉱脈探知", "desc": "金と結晶が出やすくなる", "w": 2, "rare": 1},
+	{"id": "jackpot", "name": "大当たり", "desc": "砕いた岩の6%がクレジット ×10", "w": 2, "rare": 1},
+	{"id": "interest", "name": "複利運用", "desc": "10秒ごとに所持クレジットの2%を得る", "w": 1, "rare": 1},
+	{"id": "quick", "name": "崩壊促進", "desc": "惑星が早く割れる（必要量 -8%）", "w": 1, "rare": 1, "max": 2},
+	{"id": "boss_time", "name": "時間延長", "desc": "巨大惑星の制限時間 +15秒", "w": 2, "rare": 0, "max": 3},
+	{"id": "overclock", "name": "過負荷運転", "desc": "全ツールの威力 ×2\n代償：強化費用 +25%", "w": 1, "rare": 2},
 ]
 
-# --- ラン中の状態 ---
-var seed_base: int = 0
-var sector: int = 1
-var sector_type: String = "standard"
-var sector_time: float = 0.0
-var items := {}
-var kits := {}
-var fuel: float = 100.0
-var max_fuel: float = 100.0
-var alive: bool = true
-var cards_taken: Array[String] = []
-var produced := {}
-var derelicts_opened: int = 0
-var level: int = 1
-var xp: float = 0.0
-var pending_levels: int = 0
+## スキル（研究データで強化、帰還しても残る）。req は前提スキルとそのレベル。
+const SKILLS := [
+	{"id": "power", "name": "採掘効率", "desc": "全ツールの威力 +25%", "max": 30, "cost": 1.0, "growth": 1.35, "req": "", "rl": 0, "color": Color(1.0, 0.4, 0.35)},
+	{"id": "appraise", "name": "鉱石鑑定", "desc": "獲得クレジット +20%", "max": 30, "cost": 1.0, "growth": 1.35, "req": "", "rl": 0, "color": Color(1.0, 0.85, 0.3)},
+	{"id": "seed", "name": "初期資金", "desc": "出発時のクレジット ×5", "max": 8, "cost": 2.0, "growth": 1.8, "req": "", "rl": 0, "color": Color(0.5, 1.0, 0.55)},
+	{"id": "drones", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": 3.0, "growth": 2.0, "req": "power", "rl": 2, "color": Color(0.35, 0.9, 1.0)},
+	{"id": "tapper", "name": "精密掘削", "desc": "タップの威力 ×1.5", "max": 10, "cost": 2.0, "growth": 1.5, "req": "appraise", "rl": 2, "color": Color(1.0, 0.6, 0.3)},
+	{"id": "thrift", "name": "量産体制", "desc": "ツールの強化費用 -4%", "max": 10, "cost": 3.0, "growth": 1.6, "req": "seed", "rl": 2, "color": Color(0.6, 1.0, 0.8)},
+	{"id": "choices", "name": "選択肢の拡張", "desc": "強化カードの選択肢 +1", "max": 2, "cost": 12.0, "growth": 4.0, "req": "drones", "rl": 2, "color": Color(0.85, 0.5, 1.0)},
+	{"id": "reroll", "name": "再抽選", "desc": "惑星ごとにカードを引き直せる回数 +1", "max": 3, "cost": 8.0, "growth": 3.0, "req": "tapper", "rl": 3, "color": Color(0.95, 0.45, 0.9)},
+	{"id": "autobuy", "name": "自動強化", "desc": "一番安いツールを自動で強化", "max": 1, "cost": 15.0, "growth": 1.0, "req": "thrift", "rl": 3, "color": Color(0.4, 0.8, 1.0)},
+	{"id": "idle", "name": "放置報酬", "desc": "閉じている間の報酬 +25%・上限 +1時間", "max": 6, "cost": 6.0, "growth": 1.9, "req": "autobuy", "rl": 1, "color": Color(0.7, 0.75, 1.0)},
+	{"id": "boss", "name": "巨大惑星対策", "desc": "巨大惑星の制限時間 +10秒", "max": 4, "cost": 8.0, "growth": 2.2, "req": "choices", "rl": 1, "color": Color(1.0, 0.5, 0.5)},
+	{"id": "research", "name": "観測ログ", "desc": "帰還時の研究データ +15%", "max": 20, "cost": 10.0, "growth": 1.5, "req": "reroll", "rl": 1, "color": Color(0.5, 0.9, 1.0)},
+]
 
-var ship_mine_mult: float = 1.0
-var miner_mult: float = 1.0
-var factory_mult: float = 1.0
-var type_mult := {}
-var fuel_burn_mult: float = 1.0
-var scan_mult: float = 1.0
-var ice_fuel_mult: float = 1.0
-var storage_mult: float = 1.0
-var drone_speed_mult: float = 1.0
-var drone_carry_mult: float = 1.0
-var miner_cap: int = 6
-var instability_grace: float = INSTABILITY_GRACE
-var oracle: bool = false
-var salvage_mult: float = 1.0
-var crystal_drill: bool = false
-var collect_mult: float = 1.0
+# --- ラン ---
+var run_seed: int = 0
+var credits: float = 0.0
+var total_earned: float = 0.0
+var tool_levels := {}
+var planet: int = 1
+var best_planet_run: int = 1
+var cards := {}  # id -> 回数（tool_boost は "tool_boost:drone" など）
+var income_rate: float = 0.0  # 直近の毎秒獲得量（放置報酬の計算に使う）
 
-# --- ランをまたいで残る状態 ---
-var data_points: int = 0
+# --- メタ ---
+var data: float = 0.0
 var skills := {}
-var best_score: int = 0
-var runs_played: int = 0
-var best_sector: int = 0
-var last_data_gain: int = 0
+var best_planet: int = 1
+var prestiges: int = 0
+var offline_gain: float = 0.0
+var offline_secs: float = 0.0
+
+var _save_t: float = 0.0
+var _interest_t: float = 0.0
+var _income_acc: float = 0.0
+var _income_t: float = 0.0
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	reset_run()
 	_load()
 
 
-func has_skill(id: String) -> bool:
-	return skills.has(id)
+func _process(delta: float) -> void:
+	if get_tree().paused:
+		return
+	_income_t += delta
+	if _income_t >= 5.0:
+		income_rate = lerpf(income_rate, _income_acc / _income_t, 0.5)
+		_income_acc = 0.0
+		_income_t = 0.0
+	if card_count("interest") > 0:
+		_interest_t += delta
+		if _interest_t >= 10.0:
+			_interest_t = 0.0
+			earn(credits * 0.02 * card_count("interest"), false)
+	_save_t += delta
+	if _save_t >= 5.0:
+		_save_t = 0.0
+		save()
 
 
-func skill_def(id: String) -> Dictionary:
-	for s in SKILLS:
-		if s["id"] == id:
-			return s
+# ---------------------------------------------------------------- 数字の表示
+
+
+const SUFFIX := ["", "K", "M", "B", "T", "aa", "ab", "ac", "ad", "ae", "af", "ag", "ah"]
+
+
+static func fmt(x: float) -> String:
+	if x < 1000.0:
+		if x < 10.0 and absf(x - roundf(x)) > 0.05:
+			return "%.1f" % x
+		return str(int(x))
+	var e := 0
+	while x >= 1000.0 and e < SUFFIX.size() - 1:
+		x /= 1000.0
+		e += 1
+	if x >= 100.0:
+		return "%d%s" % [int(x), SUFFIX[e]]
+	return "%.2f%s" % [x, SUFFIX[e]]
+
+
+# ---------------------------------------------------------------- ラン
+
+
+func reset_run() -> void:
+	run_seed = randi()
+	credits = 15.0 * pow(5.0, skill_level("seed"))
+	total_earned = 0.0
+	tool_levels = {}
+	for t in TOOLS:
+		tool_levels[t["id"]] = 0
+	tool_levels["drone"] = 1
+	planet = 1
+	best_planet_run = 1
+	cards = {}
+	income_rate = 0.0
+
+
+func galaxy() -> int:
+	return (planet - 1) / PLANETS_PER_GALAXY + 1
+
+
+func planet_in_galaxy() -> int:
+	return (planet - 1) % PLANETS_PER_GALAXY + 1
+
+
+func is_boss() -> bool:
+	return planet_in_galaxy() == PLANETS_PER_GALAXY
+
+
+func boss_time() -> float:
+	return BOSS_TIME + 10.0 * skill_level("boss") + 15.0 * card_count("boss_time")
+
+
+## 1マスの基本耐久。惑星ごとに 1.5 倍で硬くなる。
+func cell_hp() -> float:
+	return 1.2 * pow(1.5, planet - 1) * (2.5 if is_boss() else 1.0)
+
+
+## 1マスを砕いたときの基本クレジット。
+func cell_value() -> float:
+	return 0.9 * pow(1.47, planet - 1) * value_mult() * (2.0 if is_boss() else 1.0)
+
+
+func clear_ratio() -> float:
+	return CLEAR_RATIO - 0.08 * card_count("quick")
+
+
+func rich_ores() -> bool:
+	return card_count("rich") > 0
+
+
+func value_mult() -> float:
+	return pow(1.2, skill_level("appraise")) * pow(1.35, card_count("value"))
+
+
+func earn(amount: float, track: bool = true) -> void:
+	credits += amount
+	total_earned += amount
+	if track:
+		_income_acc += amount
+
+
+# ---------------------------------------------------------------- ツール
+
+
+func tool_def(id: String) -> Dictionary:
+	for t in TOOLS:
+		if t["id"] == id:
+			return t
 	return {}
 
 
-func skill_available(id: String) -> bool:
-	var s := skill_def(id)
-	var req := String(s.get("req", ""))
-	return req == "" or has_skill(req)
+func tool_level(id: String) -> int:
+	return int(tool_levels.get(id, 0))
 
 
-func buy_skill(id: String) -> bool:
-	var s := skill_def(id)
-	if s.is_empty() or has_skill(id) or not skill_available(id) or data_points < int(s["cost"]):
-		return false
-	data_points -= int(s["cost"])
-	skills[id] = true
-	_save()
-	return true
+func dps_mult() -> float:
+	var m := pow(1.25, skill_level("power")) * pow(1.3, card_count("all_dps"))
+	m *= pow(2.0, card_count("overclock"))
+	return m
 
 
-func new_run(seed_value: int = -1) -> void:
-	seed_base = seed_value if seed_value >= 0 else randi()
-	sector = 1
-	sector_type = "standard"
-	items = {}
-	for k in ITEMS:
-		items[k] = 0.0
-	items["plate"] = 8.0
-	kits = {"miner": 4, "hub": 1, "smelter": 1, "wiremill": 1, "assembler": 1}
-	max_fuel = 100.0
-	alive = true
-	cards_taken.clear()
-	produced = {}
-	derelicts_opened = 0
-	level = 1
-	xp = 0.0
-	pending_levels = 0
-	ship_mine_mult = 1.0
-	miner_mult = 1.0
-	factory_mult = 1.0
-	type_mult = {}
-	fuel_burn_mult = 1.0
-	scan_mult = 1.0
-	ice_fuel_mult = 1.0
-	storage_mult = 1.0
-	drone_speed_mult = 1.0
-	drone_carry_mult = 1.0
-	miner_cap = 6
-	instability_grace = INSTABILITY_GRACE
-	oracle = false
-	salvage_mult = 1.0
-	crystal_drill = false
-	# スキルの効果
-	if has_skill("start_plate"):
-		items["plate"] += 20.0
-	if has_skill("drill"):
-		ship_mine_mult *= 1.5
-	if has_skill("start_fuel"):
-		max_fuel += 25.0
-	if has_skill("smelt_line"):
-		add_kit("smelter", 1)
-	if has_skill("mass_miner"):
-		add_kit("miner", 3)
-		miner_cap += 3
-	if has_skill("assembly_line"):
-		add_kit("assembler", 1)
-		add_kit("wiremill", 1)
-	if has_skill("stability"):
-		instability_grace += 45.0
-	if has_skill("factory_speed"):
-		factory_mult *= 1.25
-	if has_skill("start_quantum"):
-		add_kit("quantum", 1)
-	fuel = max_fuel
-	start_sector()
+func tool_dps_at(id: String, lv: int) -> float:
+	if lv <= 0:
+		return 0.0
+	var t := tool_def(id)
+	var d := float(t["dps"]) * lv * pow(2.0, lv / 25)
+	return d * dps_mult() * pow(1.6, card_count("tool_boost:" + id))
 
 
-func start_sector() -> void:
-	sector_time = 0.0
+func tool_dps(id: String) -> float:
+	return tool_dps_at(id, tool_level(id))
 
 
-func meteor_warning() -> float:
-	return 4.0 if has_skill("forecast") else 2.5
-
-
-func drones_per_hub() -> int:
-	return 3 if has_skill("drones") else 2
-
-
-func card_choices() -> int:
-	return 4 if has_skill("more_cards") else 3
-
-
-## セクターごとのシード。同じラン・同じセクターなら同じ地形になる。
-func sector_seed() -> int:
-	return hash("%d:%d" % [seed_base, sector])
-
-
-func item_name(k: String) -> String:
-	return String(ITEMS[k]["name"])
-
-
-func count(k: String) -> int:
-	return int(floor(float(items.get(k, 0.0)) + 0.001))
-
-
-## 鉱石を受け取る。氷はその場で燃料に精製される。
-func add_ore(kind: String, amount: float) -> void:
-	if amount <= 0.0:
-		return
-	if kind == "ice":
-		fuel = minf(max_fuel, fuel + amount * 0.5 * ice_fuel_mult)
-		return
-	var key := kind if kind == "crystal" else kind + "_ore"
-	add_item(key, amount)
-
-
-func add_item(k: String, amount: float) -> void:
-	items[k] = float(items.get(k, 0.0)) + amount
-
-
-func note_produced(k: String, amount: float) -> void:
-	produced[k] = float(produced.get(k, 0.0)) + amount
-	add_xp(float(XP_VALUE.get(k, 0.0)) * amount)
-
-
-func xp_needed() -> float:
-	return 12.0 * pow(float(level), 1.35)
-
-
-func add_xp(amount: float) -> void:
-	xp += amount
-	while xp >= xp_needed():
-		xp -= xp_needed()
-		level += 1
-		pending_levels += 1
-
-
-func add_kit(b: String, n: int) -> void:
-	kits[b] = int(kits.get(b, 0)) + n
-
-
-func kit_count(b: String) -> int:
-	return int(kits.get(b, 0))
-
-
-func speed_of(btype: String) -> float:
-	return factory_mult * float(type_mult.get(btype, 1.0))
-
-
-func instability() -> float:
-	var over := sector_time - instability_grace
-	if over <= 0.0:
-		return 1.0
-	return minf(INSTABILITY_MAX, 1.0 + over * INSTABILITY_RAMP)
-
-
-func burn_fuel(amount: float) -> void:
-	if not alive:
-		return
-	fuel -= amount * fuel_burn_mult * instability()
-	if fuel <= 0.0:
-		fuel = 0.0
-		end_run("燃料切れ", false)
-
-
-func damage_fuel(amount: float) -> void:
-	if not alive:
-		return
-	fuel = maxf(0.0, fuel - amount)
-	if fuel <= 0.0:
-		end_run("燃料切れ", false)
-
-
-func data_gain(victory: bool) -> int:
-	var g := float((sector - 1) * 6)
-	g += float(produced.get("circuit", 0.0)) * 0.4
-	g += float(produced.get("qcore", 0.0)) * 2.0
-	g += derelicts_opened * 1.0
-	g += level * 0.5
-	if victory:
-		g += 40.0
-	if has_skill("data_boost"):
-		g *= 1.5
-	return maxi(int(g), 3)
-
-
-func end_run(reason: String, victory: bool) -> void:
-	if not alive:
-		return
-	alive = false
-	runs_played += 1
-	best_sector = maxi(best_sector, sector)
-	last_data_gain = data_gain(victory)
-	data_points += last_data_gain
-	var s := score(victory)
-	if s > best_score:
-		best_score = s
-	_save()
-	run_over.emit(reason, victory)
-
-
-func score(victory: bool = false) -> int:
-	var s := (sector - 1) * 1000 + int(fuel) * 5 + level * 50
-	for k in MADE_ITEMS:
-		s += int(float(produced.get(k, 0.0))) * (1 if k in ["plate", "wire"] else 20)
-	if victory:
-		s += 5000
+func total_dps() -> float:
+	var s := 0.0
+	for t in TOOLS:
+		s += tool_dps(String(t["id"]))
 	return s
 
 
-## 量子コアが要るのに、このランでは作れない状態か。
-func quantum_blocked() -> bool:
-	return warp_cost().has("qcore") and not has_skill("quantum") and count("qcore") < int(warp_cost()["qcore"])
+func cost_mult() -> float:
+	var m := pow(0.96, skill_level("thrift")) * pow(0.88, card_count("discount"))
+	m *= pow(1.25, card_count("overclock"))
+	return m
 
 
-func is_final_sector() -> bool:
-	return sector >= FINAL_SECTOR
+## Lv lv から n 段強化する費用。
+func upgrade_cost(id: String, n: int = 1) -> float:
+	var t := tool_def(id)
+	var lv := tool_level(id)
+	var g := float(t["growth"])
+	var base := float(t["cost"]) * cost_mult() * pow(g, lv)
+	if n == 1:
+		return base
+	return base * (pow(g, n) - 1.0) / (g - 1.0)
 
 
-func warp_cost() -> Dictionary:
-	# 後半ほど急に重くなる。前のセクターの在庫だけでは素通りできない
-	var c := {"circuit": int(round(3.0 + 2.0 * sector + 0.9 * sector * sector))}
-	if sector >= 5:
-		c["qcore"] = (sector - 4) * 3
-	if is_final_sector():
-		for k in c:
-			c[k] = int(ceil(float(c[k]) * 1.5))
-	return c
+## いまのクレジットで買える段数（上限 cap、0 なら無制限）。
+func affordable(id: String, cap: int) -> int:
+	var n := 0
+	while (cap == 0 or n < cap) and n < 1000:
+		if upgrade_cost(id, n + 1) > credits:
+			break
+		n += 1
+	return n
 
 
-func can_afford(cost: Dictionary) -> bool:
-	for k in cost:
-		if float(items.get(k, 0.0)) + 0.001 < float(cost[k]):
-			return false
-	return true
-
-
-func pay(cost: Dictionary) -> bool:
-	if not can_afford(cost):
+func buy_tool(id: String, n: int = 1) -> bool:
+	if n <= 0:
 		return false
-	for k in cost:
-		items[k] = float(items[k]) - float(cost[k])
+	var c := upgrade_cost(id, n)
+	if c > credits:
+		return false
+	credits -= c
+	tool_levels[id] = tool_level(id) + n
+	changed.emit()
 	return true
 
 
-func cost_text(cost: Dictionary) -> String:
-	var parts: PackedStringArray = []
-	for k in cost:
-		parts.append("%s %d" % [item_name(k), int(cost[k])])
-	return " / ".join(parts)
+## 次に2倍になるレベルまでの進み具合（0〜1）
+func milestone_frac(id: String) -> float:
+	return float(tool_level(id) % 25) / 25.0
 
 
+func tap_damage() -> float:
+	return maxf(2.0, total_dps() * 0.06) * pow(1.5, skill_level("tapper")) * pow(2.5, card_count("tap"))
+
+
+func drone_count() -> int:
+	return 1 + skill_level("drones")
+
+
+# ---------------------------------------------------------------- カード
+
+
+func card_count(id: String) -> int:
+	return int(cards.get(id, 0))
+
+
+func card_choices() -> int:
+	return 3 + skill_level("choices")
+
+
+func rerolls() -> int:
+	return skill_level("reroll")
+
+
+## 強化カードを n 枚引く。返り値の各要素：{"key", "name", "desc", "rare"}
 func roll_cards(n: int) -> Array:
 	var pool: Array = []
 	for c in CARDS:
-		if c.has("skill") and not has_skill(String(c["skill"])):
+		var id := String(c["id"])
+		if c.has("max") and card_count(id) >= int(c["max"]):
 			continue
-		if c.get("once", false) and String(c["id"]) in cards_taken:
+		if id == "boss_time" and planet_in_galaxy() < 3:
 			continue
-		pool.append(c)
+		if id == "tool_boost":
+			for t in TOOLS:
+				if tool_level(String(t["id"])) > 0:
+					pool.append({"key": "tool_boost:" + String(t["id"]), "name": String(c["name"]) % t["name"], "desc": String(c["desc"]) % t["name"], "rare": 0, "w": 2.0, "color": t["color"]})
+			continue
+		pool.append({"key": id, "name": c["name"], "desc": c["desc"], "rare": c["rare"], "w": float(c["w"])})
 	var out: Array = []
 	while out.size() < n and not pool.is_empty():
 		var total := 0.0
@@ -413,79 +331,149 @@ func roll_cards(n: int) -> Array:
 	return out
 
 
-func apply_card(id: String) -> void:
-	cards_taken.append(id)
-	match id:
-		"add_smelter":
-			add_kit("smelter", 1)
-		"add_wiremill":
-			add_kit("wiremill", 1)
-		"add_assembler":
-			add_kit("assembler", 1)
-		"add_quantum":
-			add_kit("quantum", 1)
-		"add_miners":
-			add_kit("miner", 3)
-			miner_cap += 3
-		"add_hub":
-			add_kit("hub", 1)
-		"smelt_speed":
-			type_mult["smelter"] = float(type_mult.get("smelter", 1.0)) * 1.4
-		"wire_speed":
-			type_mult["wiremill"] = float(type_mult.get("wiremill", 1.0)) * 1.4
-		"asm_speed":
-			type_mult["assembler"] = float(type_mult.get("assembler", 1.0)) * 1.4
-		"q_speed":
-			type_mult["quantum"] = float(type_mult.get("quantum", 1.0)) * 1.5
-		"miner_rate":
-			miner_mult *= 1.4
-		"storage":
-			storage_mult *= 1.6
-		"drone_speed":
-			drone_speed_mult *= 1.5
-		"drone_carry":
-			drone_carry_mult *= 1.5
-		"ship_drill":
-			ship_mine_mult *= 1.6
-		"fuel_eff":
-			fuel_burn_mult *= 0.8
-		"ice_refinery":
-			ice_fuel_mult *= 2.0
-		"big_tank":
-			max_fuel += 40.0
-			fuel = max_fuel
-		"scanner":
-			scan_mult *= 1.5
-		"stabilizer":
-			instability_grace += 30.0
-		"oracle":
-			oracle = true
-		"overdrive":
-			factory_mult *= 1.35
-			fuel_burn_mult *= 1.2
-		"salvager":
-			salvage_mult = 2.0
-		"crystal_drill":
-			crystal_drill = true
+func take_card(key: String) -> void:
+	cards[key] = card_count(key) + 1
+	changed.emit()
+
+
+## いまのランで取ったカードの一覧（表示用）
+func card_summary() -> Array:
+	var out: Array = []
+	for k in cards:
+		var name := String(k)
+		if name.begins_with("tool_boost:"):
+			name = "%s 強化" % tool_def(name.trim_prefix("tool_boost:"))["name"]
+		else:
+			for c in CARDS:
+				if c["id"] == k:
+					name = String(c["name"])
+		out.append("%s ×%d" % [name, int(cards[k])])
+	return out
+
+
+# ---------------------------------------------------------------- 帰還とスキル
+
+
+## いま帰還すると得られる研究データ
+func prestige_gain() -> int:
+	var p := best_planet_run - 1
+	if p < 5:
+		return 0
+	var g := pow(float(p) / 5.0, 1.8) * 2.0
+	g *= pow(1.15, skill_level("research"))
+	return int(g)
+
+
+func prestige() -> void:
+	data += prestige_gain()
+	prestiges += 1
+	best_planet = maxi(best_planet, best_planet_run)
+	reset_run()
+	save()
+	changed.emit()
+
+
+func skill_def(id: String) -> Dictionary:
+	for s in SKILLS:
+		if s["id"] == id:
+			return s
+	return {}
+
+
+func skill_level(id: String) -> int:
+	return int(skills.get(id, 0))
+
+
+func skill_cost(id: String) -> float:
+	var s := skill_def(id)
+	return ceilf(float(s["cost"]) * pow(float(s["growth"]), skill_level(id)))
+
+
+func skill_open(id: String) -> bool:
+	var s := skill_def(id)
+	var req := String(s["req"])
+	return req == "" or skill_level(req) >= int(s["rl"])
+
+
+func skill_maxed(id: String) -> bool:
+	return skill_level(id) >= int(skill_def(id)["max"])
+
+
+func can_buy_skill(id: String) -> bool:
+	return skill_open(id) and not skill_maxed(id) and data >= skill_cost(id)
+
+
+func buy_skill(id: String) -> bool:
+	if not can_buy_skill(id):
+		return false
+	data -= skill_cost(id)
+	skills[id] = skill_level(id) + 1
+	save()
+	changed.emit()
+	return true
+
+
+## 一番安いスキルから、買えるだけ買う。
+func buy_all_skills() -> int:
+	var n := 0
+	while n < 500:
+		var best := ""
+		var best_c := INF
+		for s in SKILLS:
+			var id := String(s["id"])
+			if can_buy_skill(id) and skill_cost(id) < best_c:
+				best = id
+				best_c = skill_cost(id)
+		if best == "":
+			break
+		buy_skill(best)
+		n += 1
+	return n
+
+
+# ---------------------------------------------------------------- 保存と放置報酬
+
+
+func save() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("run", "seed", run_seed)
+	cfg.set_value("run", "credits", credits)
+	cfg.set_value("run", "total_earned", total_earned)
+	cfg.set_value("run", "tools", tool_levels)
+	cfg.set_value("run", "planet", planet)
+	cfg.set_value("run", "best_planet_run", best_planet_run)
+	cfg.set_value("run", "cards", cards)
+	cfg.set_value("run", "income_rate", income_rate)
+	cfg.set_value("meta", "data", data)
+	cfg.set_value("meta", "skills", skills)
+	cfg.set_value("meta", "best_planet", best_planet)
+	cfg.set_value("meta", "prestiges", prestiges)
+	cfg.set_value("meta", "time", Time.get_unix_time_from_system())
+	cfg.save(SAVE_PATH)
 
 
 func _load() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(SAVE_PATH) == OK:
-		best_score = int(cfg.get_value("stats", "best_score", 0))
-		runs_played = int(cfg.get_value("stats", "runs_played", 0))
-		best_sector = int(cfg.get_value("stats", "best_sector", 0))
-		data_points = int(cfg.get_value("meta", "data_points", 0))
-		var r: Array = cfg.get_value("meta", "skills", [])
-		for id in r:
-			skills[String(id)] = true
-
-
-func _save() -> void:
-	var cfg := ConfigFile.new()
-	cfg.set_value("stats", "best_score", best_score)
-	cfg.set_value("stats", "runs_played", runs_played)
-	cfg.set_value("stats", "best_sector", best_sector)
-	cfg.set_value("meta", "data_points", data_points)
-	cfg.set_value("meta", "skills", skills.keys())
-	cfg.save(SAVE_PATH)
+	if cfg.load(SAVE_PATH) != OK:
+		return
+	run_seed = int(cfg.get_value("run", "seed", run_seed))
+	credits = float(cfg.get_value("run", "credits", credits))
+	total_earned = float(cfg.get_value("run", "total_earned", 0.0))
+	var tl: Dictionary = cfg.get_value("run", "tools", {})
+	for k in tl:
+		tool_levels[k] = int(tl[k])
+	planet = int(cfg.get_value("run", "planet", 1))
+	best_planet_run = int(cfg.get_value("run", "best_planet_run", planet))
+	cards = cfg.get_value("run", "cards", {})
+	income_rate = float(cfg.get_value("run", "income_rate", 0.0))
+	data = float(cfg.get_value("meta", "data", 0.0))
+	skills = cfg.get_value("meta", "skills", {})
+	best_planet = int(cfg.get_value("meta", "best_planet", 1))
+	prestiges = int(cfg.get_value("meta", "prestiges", 0))
+	var t := float(cfg.get_value("meta", "time", 0.0))
+	var away := Time.get_unix_time_from_system() - t
+	if t > 0.0 and away > 60.0:
+		offline_secs = minf(away, (OFFLINE_CAP_H + skill_level("idle")) * 3600.0)
+		offline_gain = income_rate * offline_secs * OFFLINE_RATE * pow(1.25, skill_level("idle"))
+		if offline_gain > 0.0:
+			earn(offline_gain, false)
