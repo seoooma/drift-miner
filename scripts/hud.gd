@@ -441,10 +441,36 @@ func _draw_overlay() -> void:
 		return
 	var s := _size()
 	var p: Planet = main.planet
+	# 惑星が上まで映るので、上の情報欄に暗い帯を敷いて読みやすくする
+	_overlay.draw_rect(Rect2(0, 0, s.x, _top_h), Color(0.02, 0.03, 0.07, 0.72))
+	_overlay.draw_rect(Rect2(0, _top_h, s.x, 2), Color(1, 1, 1, 0.08))
 	var bar := Rect2(12, 92, s.x - 24.0, 8)
 	var frac := clampf(float(p.broken()) / maxf(1.0, p.needed()), 0.0, 1.0)
 	_overlay.draw_rect(bar, Color(1, 1, 1, 0.08))
 	_overlay.draw_rect(Rect2(bar.position, Vector2(bar.size.x * frac, bar.size.y)), Color(0.45, 0.95, 0.55))
+	_draw_minimap(p)
+
+
+## 惑星エリアの右上に、惑星全体の小さな地図と「いま見ている範囲」を描く。
+func _draw_minimap(p: Planet) -> void:
+	var tex: Texture2D = p.get("_tex")
+	if tex == null:
+		return
+	var area := planet_area()
+	var m := 92.0
+	var box := Rect2(area.end.x - m - 10.0, area.position.y + 8.0, m, m)
+	var c := box.get_center()
+	_overlay.draw_circle(c, m * 0.5 + 3.0, Color(0.02, 0.03, 0.08, 0.75))
+	_overlay.draw_arc(c, m * 0.5 + 3.0, 0.0, TAU, 40, Color(1, 1, 1, 0.25), 1.0)
+	_overlay.draw_texture_rect(tex, box, false)
+	var world := p.size * Planet.CELL
+	var k := m / world
+	var cam: Camera2D = main.camera
+	var view := area.size / cam.zoom.x
+	var vc: Vector2 = cam.position + (area.get_center() - _size() * 0.5) / cam.zoom.x
+	var vr := Rect2(c + (vc - p.position - view * 0.5) * k, view * k)
+	_overlay.draw_rect(vr, Color(1, 1, 1, 0.8), false, 1.0)
+	_overlay.draw_circle(c + (main.focus - p.position) * k, 2.5, Color(1.0, 0.9, 0.4))
 
 
 # ---------------------------------------------------------------- スキルツリー
