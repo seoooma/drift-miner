@@ -38,7 +38,7 @@ func _process(delta: float) -> void:
 		return
 	var gs := GameState
 	var c := planet.position
-	var r := planet.world_radius()
+	var r := planet.outer
 
 	# 採掘ドローン：周回しながら、自分から中心へ向かう線上の表面を削る
 	var drone_dps := gs.tool_dps("drone")
@@ -137,7 +137,7 @@ func _draw() -> void:
 		return
 	var gs := GameState
 	var c := planet.position
-	var r := planet.world_radius()
+	var r := planet.outer
 
 	# ドローン
 	var dc: Color = gs.TOOLS[0]["color"]
