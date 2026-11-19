@@ -1,6 +1,9 @@
 extends Node2D
 ## ゲームの進行。巨大惑星の生成と保存、砕いたブロックの報酬（クレジット・素材・遺物・宝箱）、
-## 惑星クリアと次の惑星、タップ掘り、自動タップ・自動強化、画面に合わせたカメラを受け持つ。
+## 惑星クリアと次の惑星、タップ掘り、自動タップ・自動強化、狙いの中心 (focus) と寄りのカメラを受け持つ。
+
+const VIEW_CELLS := 20.0  # 画面の短い辺に並ぶマスの数（ブロック1つ ≒ 画面幅の1/20）
+const MANUAL_HOLD := 10.0  # タップした場所を狙い続ける秒数
 
 const HudScript := preload("res://scripts/hud.gd")
 const BackdropScript := preload("res://scripts/backdrop.gd")
@@ -21,6 +24,10 @@ var _mat_pop_t: float = 0.0
 var _auto_t: float = 0.0
 var _tap_t: float = 0.0
 var _zoom: float = 0.0
+var focus := Vector2.ZERO  # ツールが狙う中心（ワールド座標）
+var _focus_goal := Vector2.ZERO
+var _focus_t: float = 0.0
+var _manual_t: float = 0.0
 
 
 func _ready() -> void:
@@ -79,11 +86,18 @@ func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 		planet.restore(saved)
 	tools.reset_for(planet)
 	_zoom = 0.0
+	var top := planet.surface_cell(-PI * 0.5 + randf_range(-0.6, 0.6))
+	focus = planet.cell_center(top) if top >= 0 else planet.position
+	_focus_goal = focus
+	_manual_t = 0.0
+	_focus_t = 0.0
+	tools.focus = focus
 	var tr := gs.trait_def()
 	hud.banner("惑星 %d：%s" % [gs.planet, tr["name"]], String(tr["desc"]) if saved.is_empty() else "")
 
 
 func _process(delta: float) -> void:
+	_update_focus(delta)
 	_fit_camera(delta)
 	var gs := GameState
 	if gs.skill_level("auto_buy") > 0:
@@ -109,20 +123,48 @@ func _process(delta: float) -> void:
 		_mat_pop_t = 0.5
 		for m in _mat_pop:
 			var e: Array = _mat_pop[m]
-			Fx.popup(fx_layer, e[1] + Vector2(0, -14), "+%s %s" % [gs.fmt(e[0]), gs.MAT_NAMES[m]], gs.MAT_COLORS[m])
+			Fx.popup(fx_layer, e[1] + Vector2(0, -6), "+%s %s" % [gs.fmt(e[0]), gs.MAT_NAMES[m]], gs.MAT_COLORS[m])
 		_mat_pop.clear()
 
 
-## 惑星が HUD の「惑星エリア」からはみ出すくらい大きく映るようにカメラを合わせる。
-## 削れて小さくなるほど寄っていく。
+## 狙いの中心を決める。タップした直後はそこを狙い続け、それ以外は
+## 近くで一番「おいしい」マス（鉱石・遺物・浅い所）へ少しずつ移っていく。
+func _update_focus(delta: float) -> void:
+	if planet.done:
+		return
+	_manual_t -= delta
+	_focus_t -= delta
+	if _focus_t <= 0.0:
+		_focus_t = 0.5
+		var near := planet.targets_near(focus, 5)
+		if _manual_t > 0.0 and not near.is_empty():
+			_focus_goal = focus
+		else:
+			_manual_t = 0.0
+			var t := planet.targets_near(focus, 20)
+			if not t.is_empty():
+				_focus_goal = planet.cell_center(int(t[0]))
+			else:
+				var i := planet.raycast(focus, planet.position)
+				if i < 0:
+					i = planet.random_surface_cell()
+				if i >= 0:
+					_focus_goal = planet.cell_center(i)
+	if _manual_t <= 0.0:
+		focus = focus.move_toward(_focus_goal, maxf(18.0, focus.distance_to(_focus_goal) * 1.5) * delta)
+	tools.focus = focus
+
+
+## 惑星の一部だけが大きく映るよう、狙いの中心にカメラを寄せる。
 func _fit_camera(delta: float) -> void:
 	var area: Rect2 = hud.planet_area()
-	var target := minf(area.size.x, area.size.y) / (planet.outer * 2.0 * 0.86)
-	target = minf(target, 4.0)
-	_zoom = target if _zoom <= 0.0 else lerpf(_zoom, target, clampf(delta * 1.5, 0.0, 1.0))
+	var target := minf(area.size.x, area.size.y) / (VIEW_CELLS * Planet.CELL)
+	_zoom = target if _zoom <= 0.0 else lerpf(_zoom, target, clampf(delta * 3.0, 0.0, 1.0))
 	camera.zoom = Vector2(_zoom, _zoom)
+	Fx.view_scale = 1.0 / _zoom
 	var vp := get_viewport().get_visible_rect().size
-	camera.position = planet.position - (area.get_center() - vp * 0.5) / _zoom
+	var goal := focus - (area.get_center() - vp * 0.5) / _zoom
+	camera.position = goal if camera.position == Vector2.ZERO else camera.position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0))
 
 
 func _auto_buy() -> void:
@@ -180,8 +222,8 @@ func _on_cleared() -> void:
 	var bonus := planet.remaining_value() * 0.5
 	gs.earn(bonus)
 	var extra := gs.finish_planet()
-	Fx.burst(fx_layer, planet.position, Color(1.0, 0.85, 0.5), 120, 520.0)
-	Fx.popup(fx_layer, planet.position, "惑星を破壊！", Color(1.0, 0.9, 0.5))
+	Fx.burst(fx_layer, focus, Color(1.0, 0.85, 0.5), 120, 520.0)
+	Fx.popup(fx_layer, focus, "惑星を破壊！", Color(1.0, 0.9, 0.5))
 	await get_tree().create_timer(1.2).timeout
 	get_tree().paused = true
 	hud.show_clear(extra, gs.roll_next_traits())
@@ -204,6 +246,16 @@ func tap_at(world_pos: Vector2) -> void:
 	tools.tap_effect(world_pos)
 
 
+## プレイヤーがタップした場所を、しばらく狙いの中心にする。
+func set_focus(world_pos: Vector2) -> void:
+	focus = world_pos
+	_focus_goal = world_pos
+	_manual_t = MANUAL_HOLD
+	_focus_t = 0.0
+	tools.focus = focus
+	tools.rescan()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	var pressed := false
 	var pos := Vector2.ZERO
@@ -214,7 +266,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		pressed = true
 		pos = event.position
 	if pressed and hud.planet_area().has_point(pos) and not hud.any_panel():
-		tap_at(get_canvas_transform().affine_inverse() * pos)
+		var wp := get_canvas_transform().affine_inverse() * pos
+		set_focus(wp)
+		tap_at(wp)
 
 
 func _notification(what: int) -> void:

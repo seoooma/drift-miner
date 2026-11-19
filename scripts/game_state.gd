@@ -13,12 +13,12 @@ const OFFLINE_CAP_H := 2.0
 ## 採掘ツール。dps は Lv1 の毎秒ダメージ。Lv25 ごとに威力が上がる（基本 ×2）。
 ## ドローン以外はスキルツリーで解放する。
 const TOOLS := [
-	{"id": "drone", "name": "採掘ドローン", "desc": "惑星のまわりを回り、表面を削る", "dps": 2.0, "cost": 6.0, "growth": 1.11, "color": Color(0.35, 0.9, 1.0)},
-	{"id": "cutter", "name": "回転カッター", "desc": "地表を転がりながら周囲を切り崩す", "dps": 18.0, "cost": 150.0, "growth": 1.12, "color": Color(1.0, 0.62, 0.25)},
-	{"id": "laser", "name": "掃射レーザー", "desc": "衛星から地表をなぎ払う", "dps": 140.0, "cost": 4000.0, "growth": 1.13, "color": Color(1.0, 0.3, 0.4)},
-	{"id": "bomb", "name": "重力爆雷", "desc": "一定間隔で落ちて広い範囲を砕く", "dps": 1100.0, "cost": 1.2e5, "growth": 1.14, "color": Color(0.8, 0.45, 1.0)},
-	{"id": "lance", "name": "コアランス", "desc": "中心核へまっすぐ穴を掘り進む", "dps": 9000.0, "cost": 4.0e6, "growth": 1.15, "color": Color(0.45, 1.0, 0.5)},
-	{"id": "swarm", "name": "ナノスウォーム", "desc": "無数の微小機械が全面を少しずつ食べる", "dps": 80000.0, "cost": 1.5e8, "growth": 1.16, "color": Color(1.0, 0.9, 0.35)},
+	{"id": "drone", "name": "採掘ドローン", "desc": "近くの鉱石を自動で狙い、ビームで削る", "dps": 2.0, "cost": 6.0, "growth": 1.11, "color": Color(0.35, 0.9, 1.0)},
+	{"id": "cutter", "name": "パルスドリル", "desc": "一番よい鉱脈に降りて、周りごと砕く", "dps": 18.0, "cost": 150.0, "growth": 1.12, "color": Color(1.0, 0.62, 0.25)},
+	{"id": "laser", "name": "精密レーザー", "desc": "上空の衛星から価値の高いマスを撃ち抜く", "dps": 140.0, "cost": 4000.0, "growth": 1.13, "color": Color(1.0, 0.3, 0.4)},
+	{"id": "bomb", "name": "重力爆雷", "desc": "狙った場所の周りに落ちて広く砕く", "dps": 1100.0, "cost": 1.2e5, "growth": 1.14, "color": Color(0.8, 0.45, 1.0)},
+	{"id": "lance", "name": "コアランス", "desc": "狙った場所から中心核へまっすぐ掘り進む", "dps": 9000.0, "cost": 4.0e6, "growth": 1.15, "color": Color(0.45, 1.0, 0.5)},
+	{"id": "swarm", "name": "ナノスウォーム", "desc": "小さな機械が狙った場所の近くに散らばって食べる", "dps": 80000.0, "cost": 1.5e8, "growth": 1.16, "color": Color(1.0, 0.9, 0.35)},
 ]
 
 ## 素材（スキルツリーの通貨。惑星を割っても残る）
@@ -78,8 +78,8 @@ const SKILLS := [
 	{"id": "resonance", "name": "共振増幅", "desc": "全ツールの威力 +30%", "max": 20, "cost": {"gold": 48}, "growth": 1.4, "parent": "tap_pow", "pos": Vector2i(0, 4)},
 	{"id": "overdrive", "name": "過負荷運転", "desc": "全ツールの威力 ×2", "max": 5, "cost": {"crystal": 60}, "growth": 2.0, "parent": "resonance", "pos": Vector2i(0, 5)},
 	# 列1：ツールの解放
-	{"id": "cutter", "name": "回転カッター", "desc": "回転カッターを解放", "max": 1, "cost": {"iron": 144}, "growth": 1.0, "parent": "base", "pos": Vector2i(1, 1)},
-	{"id": "laser", "name": "掃射レーザー", "desc": "掃射レーザーを解放", "max": 1, "cost": {"iron": 360, "copper": 180}, "growth": 1.0, "parent": "cutter", "pos": Vector2i(1, 2)},
+	{"id": "cutter", "name": "パルスドリル", "desc": "パルスドリルを解放", "max": 1, "cost": {"iron": 144}, "growth": 1.0, "parent": "base", "pos": Vector2i(1, 1)},
+	{"id": "laser", "name": "精密レーザー", "desc": "精密レーザーを解放", "max": 1, "cost": {"iron": 360, "copper": 180}, "growth": 1.0, "parent": "cutter", "pos": Vector2i(1, 2)},
 	{"id": "bomb", "name": "重力爆雷", "desc": "重力爆雷を解放", "max": 1, "cost": {"copper": 480, "gold": 120}, "growth": 1.0, "parent": "laser", "pos": Vector2i(1, 3)},
 	{"id": "lance", "name": "コアランス", "desc": "コアランスを解放", "max": 1, "cost": {"gold": 480, "crystal": 96}, "growth": 1.0, "parent": "bomb", "pos": Vector2i(1, 4)},
 	{"id": "swarm", "name": "ナノスウォーム", "desc": "ナノスウォームを解放", "max": 1, "cost": {"gold": 1440, "crystal": 480}, "growth": 1.0, "parent": "lance", "pos": Vector2i(1, 5)},

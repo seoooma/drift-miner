@@ -327,6 +327,63 @@ func hit_area(center: Vector2, r: float, damage: float) -> void:
 		hit(i, each)
 
 
+## 狙う優先度。価値の高い鉱石や遺物ほど高い。硬い岩は後回し。
+func priority(i: int) -> float:
+	var b := int(block[i])
+	var B: Dictionary = GameState.B
+	if b == B["RELIC"]:
+		return 7.0 if is_exposed(i) else 0.0
+	if b == B["CACHE"]:
+		return 6.0 if is_exposed(i) else 0.0
+	if b == B["CRYSTAL"]:
+		return 5.0
+	if b == B["GOLD"]:
+		return 4.0
+	if b == B["COPPER"] or b == B["IRON"]:
+		return 2.5
+	if b == B["VOLATILE"]:
+		return 2.0
+	if b == B["HARD"]:
+		return -3.0
+	return 0.0
+
+
+## p の周り（半径 r マス）で、表面に出ている生きたマスを「狙う順」に並べて返す。
+## 近さ・鉱石の価値・浅さで点数を付ける（深い所より表面を広く削っていく）。
+func targets_near(p: Vector2, r: int) -> Array:
+	var c0 := cell_at(p)
+	var cx: int
+	var cy: int
+	if c0 < 0:
+		var q := (p - position) / CELL + Vector2(radius_cells, radius_cells)
+		cx = int(q.x)
+		cy = int(q.y)
+	else:
+		cx = c0 % size
+		cy = c0 / size
+	var scored: Array = []
+	for y in range(maxi(0, cy - r), mini(size, cy + r + 1)):
+		for x in range(maxi(0, cx - r), mini(size, cx + r + 1)):
+			var i := y * size + x
+			if hp[i] <= 0.0 or not is_exposed(i):
+				continue
+			var d := Vector2(x - cx, y - cy).length()
+			if d > r:
+				continue
+			scored.append([priority(i) * 3.0 - d - depth[i] * 80.0, i])
+	scored.sort_custom(func(a, b): return a[0] > b[0])
+	var out: Array = []
+	for e in scored:
+		out.append(e[1])
+	return out
+
+
+## 惑星の中心から外向きの向き（そのマスの「空」の方向）
+func outward(i: int) -> Vector2:
+	var v := cell_center(i) - position
+	return v.normalized() if v.length() > 1.0 else Vector2.UP
+
+
 func remaining_value() -> float:
 	var s := 0.0
 	for i in hp.size():
