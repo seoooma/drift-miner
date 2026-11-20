@@ -3,6 +3,7 @@ extends CanvasLayer
 ## 下（横持ちでは右）：採掘ツールの一覧。パネル：スキルツリー、遺物、惑星クリア、放置報酬。
 
 const BUY_MODES := [1, 10, 0]  # 0 = 買えるだけ
+const TOOL_ICONS := {"drone": "drone", "cutter": "drill", "laser": "satellite", "bomb": "bomb", "lance": "station", "swarm": "bot"}
 
 var main: Node = null
 
@@ -17,6 +18,7 @@ var _toast_time: float = 0.0
 var _banner: Label
 var _banner_time: float = 0.0
 var _side: VBoxContainer
+var _sound_btn: Button
 var _tool_panel: PanelContainer
 var _tool_rows := {}
 var _buy_btn: Button
@@ -69,6 +71,12 @@ func _ready() -> void:
 		var b := _button(spec[0], Vector2(70, 44), 15)
 		b.pressed.connect(spec[1])
 		_side.add_child(b)
+	_sound_btn = _button("", Vector2(70, 36), 13)
+	_sound_btn.pressed.connect(func():
+		Audio.set_enabled(not Audio.enabled)
+		_update_sound_btn())
+	_side.add_child(_sound_btn)
+	_update_sound_btn()
 
 	_build_tool_panel()
 
@@ -101,18 +109,45 @@ func _box(bg: Color, border: Color, bw: int = 2, radius: int = 6) -> StyleBoxFla
 	return sb
 
 
+## Kenney の UI 素材（CC0）を9分割で伸ばす枠
+func _tex_box(path: String, margin: float, col: Color, content: float = 8.0) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = load(path)
+	sb.texture_margin_left = margin
+	sb.texture_margin_right = margin
+	sb.texture_margin_top = margin
+	sb.texture_margin_bottom = margin
+	sb.modulate_color = col
+	sb.content_margin_left = content + 2.0
+	sb.content_margin_right = content + 2.0
+	sb.content_margin_top = content * 0.6
+	sb.content_margin_bottom = content * 0.6
+	return sb
+
+
 func _make_theme() -> Theme:
 	var th := Theme.new()
-	th.set_stylebox("normal", "Button", _box(Color(0.05, 0.07, 0.1, 0.95), Color(0.4, 0.75, 0.9, 0.85)))
-	th.set_stylebox("hover", "Button", _box(Color(0.08, 0.12, 0.18, 0.95), Color(0.6, 0.9, 1.0)))
-	th.set_stylebox("pressed", "Button", _box(Color(0.15, 0.25, 0.32, 0.95), Color(0.85, 1.0, 1.0)))
-	th.set_stylebox("disabled", "Button", _box(Color(0.04, 0.05, 0.07, 0.9), Color(0.3, 0.35, 0.4, 0.6)))
+	var btn := "res://assets/ui/button.png"
+	th.set_stylebox("normal", "Button", _tex_box(btn, 14, Color(0.2, 0.42, 0.62)))
+	th.set_stylebox("hover", "Button", _tex_box(btn, 14, Color(0.28, 0.55, 0.78)))
+	th.set_stylebox("pressed", "Button", _tex_box(btn, 14, Color(0.45, 0.75, 0.95)))
+	th.set_stylebox("disabled", "Button", _tex_box(btn, 14, Color(0.16, 0.18, 0.24)))
 	th.set_stylebox("focus", "Button", StyleBoxEmpty.new())
-	th.set_color("font_disabled_color", "Button", Color(0.6, 0.65, 0.7))
-	var panel := _box(Color(0.03, 0.04, 0.06, 0.97), Color(0.45, 0.85, 0.6), 3, 14)
-	panel.set_content_margin_all(12)
+	th.set_color("font_color", "Button", Color(0.94, 0.97, 1.0))
+	th.set_color("font_hover_color", "Button", Color.WHITE)
+	th.set_color("font_disabled_color", "Button", Color(0.55, 0.6, 0.68))
+	th.set_color("font_outline_color", "Button", Color(0.0, 0.03, 0.08, 0.8))
+	th.set_constant("outline_size", "Button", 3)
+	var panel := _tex_box("res://assets/ui/panel.png", 22, Color(0.75, 0.9, 1.0, 0.97), 16.0)
+	panel.content_margin_top = 16
+	panel.content_margin_bottom = 16
 	th.set_stylebox("panel", "PanelContainer", panel)
 	return th
+
+
+func _update_sound_btn() -> void:
+	_sound_btn.text = "音 ON" if Audio.enabled else "音 OFF"
+	_sound_btn.modulate = Color.WHITE if Audio.enabled else Color(1, 1, 1, 0.6)
 
 
 func _make_label(font_size: int) -> Label:
@@ -132,6 +167,7 @@ func _button(text: String, min_size: Vector2, font_size: int) -> Button:
 	b.custom_minimum_size = min_size
 	b.add_theme_font_size_override("font_size", font_size)
 	b.focus_mode = Control.FOCUS_NONE
+	b.pressed.connect(func(): Audio.play("click"))
 	return b
 
 
@@ -249,8 +285,7 @@ func relic_found(r: Dictionary) -> void:
 func _build_tool_panel() -> void:
 	_tool_panel = PanelContainer.new()
 	_tool_panel.theme = _theme
-	var sb := _box(Color(0.02, 0.03, 0.05, 0.96), Color(0.9, 0.55, 0.25, 0.9), 2, 4)
-	sb.set_content_margin_all(8)
+	var sb := _tex_box("res://assets/ui/panel.png", 22, Color(0.8, 0.9, 1.0, 0.96), 6.0)
 	_tool_panel.add_theme_stylebox_override("panel", sb)
 	add_child(_tool_panel)
 	var v := VBoxContainer.new()
@@ -278,13 +313,24 @@ func _build_tool_panel() -> void:
 		var id := String(td["id"])
 		var col: Color = td["color"]
 		var row := PanelContainer.new()
-		var rs := _box(Color(0.04, 0.05, 0.07), Color(col, 0.75), 2, 3)
+		var rs := _box(Color(0.03, 0.05, 0.08, 0.92), Color(col, 0.55), 1, 6)
+		rs.border_width_left = 4
+		rs.shadow_color = Color(0, 0, 0, 0.35)
+		rs.shadow_size = 3
 		rs.set_content_margin_all(8)
 		row.add_theme_stylebox_override("panel", rs)
 		list.add_child(row)
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 8)
 		row.add_child(h)
+		var icon := TextureRect.new()
+		icon.texture = load("res://assets/sprites/%s.png" % TOOL_ICONS[id])
+		icon.custom_minimum_size = Vector2(26, 26)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.modulate = col.lerp(Color.WHITE, 0.3)
+		icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(icon)
 		var info := VBoxContainer.new()
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		info.add_theme_constant_override("separation", 2)
@@ -294,6 +340,8 @@ func _build_tool_panel() -> void:
 		var name := Label.new()
 		name.add_theme_font_size_override("font_size", 16)
 		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name.clip_text = true
+		name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		top.add_child(name)
 		var dps := Label.new()
 		dps.add_theme_font_size_override("font_size", 14)
@@ -302,6 +350,8 @@ func _build_tool_panel() -> void:
 		var sub := Label.new()
 		sub.add_theme_font_size_override("font_size", 13)
 		sub.modulate = Color(1, 1, 1, 0.6)
+		sub.clip_text = true
+		sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		info.add_child(sub)
 		var bar := Control.new()
 		bar.custom_minimum_size = Vector2(0, 6)
@@ -329,6 +379,7 @@ func _on_buy(id: String) -> void:
 		_open_tree()
 		return
 	if GameState.buy_tool(id, _buy_count(id)):
+		Audio.play("buy", 0.0, 0.15)
 		var row: PanelContainer = _tool_rows[id]["row"]
 		var tw := row.create_tween()
 		row.modulate = Color(1.6, 1.6, 1.6)
@@ -444,12 +495,29 @@ func _draw_overlay() -> void:
 	var s := _size()
 	var p: Planet = main.planet
 	# 惑星が上まで映るので、上の情報欄に暗い帯を敷いて読みやすくする
-	_overlay.draw_rect(Rect2(0, 0, s.x, _top_h), Color(0.02, 0.03, 0.07, 0.72))
-	_overlay.draw_rect(Rect2(0, _top_h, s.x, 2), Color(1, 1, 1, 0.08))
-	var bar := Rect2(12, 92, s.x - 24.0, 8)
+	var top := Color(0.01, 0.02, 0.05, 0.88)
+	var bot := Color(0.02, 0.05, 0.1, 0.55)
+	_overlay.draw_polygon(PackedVector2Array([Vector2(0, 0), Vector2(s.x, 0), Vector2(s.x, _top_h), Vector2(0, _top_h)]), PackedColorArray([top, top, bot, bot]))
+	_overlay.draw_rect(Rect2(0, _top_h - 1.0, s.x, 1), Color(0.45, 0.8, 1.0, 0.35))
+	_overlay.draw_rect(Rect2(s.x * 0.3, _top_h - 1.0, s.x * 0.4, 1), Color(0.6, 0.9, 1.0, 0.6))
+	# 掘削の進み具合（角の丸いバー、光沢つき）
+	var bar := Rect2(12, 90, s.x - 24.0, 10)
 	var frac := clampf(float(p.broken()) / maxf(1.0, p.needed()), 0.0, 1.0)
-	_overlay.draw_rect(bar, Color(1, 1, 1, 0.08))
-	_overlay.draw_rect(Rect2(bar.position, Vector2(bar.size.x * frac, bar.size.y)), Color(0.45, 0.95, 0.55))
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(1, 1, 1, 0.07)
+	bg.set_corner_radius_all(5)
+	bg.border_color = Color(0.5, 0.8, 1.0, 0.25)
+	bg.set_border_width_all(1)
+	_overlay.draw_style_box(bg, bar)
+	if frac > 0.0:
+		var fg := StyleBoxFlat.new()
+		fg.bg_color = Color(0.35, 0.9, 0.55)
+		fg.set_corner_radius_all(5)
+		fg.shadow_color = Color(0.4, 1.0, 0.6, 0.45)
+		fg.shadow_size = 4
+		var fr := Rect2(bar.position, Vector2(maxf(10.0, bar.size.x * frac), bar.size.y))
+		_overlay.draw_style_box(fg, fr)
+		_overlay.draw_rect(Rect2(fr.position + Vector2(4, 2), Vector2(fr.size.x - 8.0, 2)), Color(1, 1, 1, 0.35))
 	_draw_minimap(p)
 
 
@@ -479,6 +547,7 @@ func _draw_minimap(p: Planet) -> void:
 
 
 func _open_tree() -> void:
+	Audio.play("open")
 	get_tree().paused = true
 	var sk := GameState.skill_def(_tree_sel)
 	if not sk.is_empty():
@@ -602,6 +671,7 @@ func _build_tree() -> void:
 	buy.disabled = not gs.can_buy_skill(sid)
 	buy.pressed.connect(func():
 		if gs.buy_skill(sid):
+			Audio.play("skill")
 			_keep_map()
 			_build_tree())
 	row.add_child(buy)
@@ -621,6 +691,7 @@ func _build_tree() -> void:
 
 
 func _open_relics() -> void:
+	Audio.play("open")
 	get_tree().paused = true
 	_clear(_msg_box)
 	var gs := GameState

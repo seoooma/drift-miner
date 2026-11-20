@@ -30,10 +30,22 @@ var _dirty := false
 var _outer_t: float = 0.0
 var _glow := Color.WHITE
 var _t: float = 0.0
+var _cells: Sprite2D  # マス目（シェーダーで立体的に描く）
+var _marks: Node2D  # 遺物・宝箱の目印（マス目の上に描く）
+var _shader_mat: ShaderMaterial
 
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_cells = Sprite2D.new()
+	_cells.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_shader_mat = ShaderMaterial.new()
+	_shader_mat.shader = load("res://shaders/cells.gdshader")
+	_cells.material = _shader_mat
+	add_child(_cells)
+	_marks = Node2D.new()
+	_marks.draw.connect(_draw_marks)
+	add_child(_marks)
 
 
 func generate(seed_value: int, trait_rates: Dictionary) -> void:
@@ -140,7 +152,11 @@ func _cell_color(b: int, dp: float, crust: Color, mantle: Color, deep: Color, rn
 	else:
 		c = GameState.BLOCK_COLORS[b]
 		c = c.darkened(0.1 + dp * 0.25)
-	return c.darkened(rng.randf_range(0.0, 0.1))
+	c = c.darkened(rng.randf_range(0.0, 0.1))
+	# 鉱石はアルファを少し下げて目印にする（シェーダーできらめかせる）
+	if b in [GameState.B.IRON, GameState.B.COPPER, GameState.B.GOLD, GameState.B.CRYSTAL]:
+		c.a = 0.9
+	return c
 
 
 func _redraw_all() -> void:
@@ -152,10 +168,14 @@ func _redraw_all() -> void:
 			else:
 				var k := 1.0 - hp[i] / max_hp[i]
 				_img.set_pixel(x, y, _base_colors[i].lerp(Color(1, 0.95, 0.85), k * 0.45))
-	if _tex == null:
+	if _tex == null or _tex.get_width() != size:
 		_tex = ImageTexture.create_from_image(_img)
 	else:
 		_tex.update(_img)
+	if _cells != null:
+		_cells.texture = _tex
+		_cells.scale = Vector2(CELL, CELL)
+		_shader_mat.set_shader_parameter("grid", Vector2(size, size))
 	queue_redraw()
 
 
@@ -259,6 +279,94 @@ func hover_point(i: int, dist: float) -> Vector2:
 			return p
 		k -= CELL * 0.5
 	return c + d * CELL
+
+
+## a から b までまっすぐ、入れる場所だけを通って行けるか
+func line_clear(a: Vector2, b: Vector2) -> bool:
+	var d := a.distance_to(b)
+	var n := int(d / (CELL * 0.5)) + 1
+	for k in range(1, n + 1):
+		if not is_open(a.lerp(b, float(k) / n)):
+			return false
+	return true
+
+
+## from から to への、入れる場所だけを通る道（マスの中心の並び）。見つからなければ空。
+## 探す広さは limit マスまで（遠すぎる道は探さない）。
+func find_path(from: Vector2, to: Vector2, limit: int = 2500) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	var s0 := _grid_of(from)
+	var g0 := _grid_of(to)
+	if s0 == g0:
+		out.append(to)
+		return out
+	var prev := {s0: -1}
+	var q: Array = [s0]
+	var head := 0
+	var found := false
+	while head < q.size() and q.size() < limit:
+		var c: int = q[head]
+		head += 1
+		if c == g0:
+			found = true
+			break
+		var x := c % size
+		var y := c / size
+		for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx: int = x + o.x
+			var ny: int = y + o.y
+			if nx < 0 or ny < 0 or nx >= size or ny >= size:
+				continue
+			var j := ny * size + nx
+			if prev.has(j) or (air[j] == 0 and j != g0):
+				continue
+			prev[j] = c
+			q.append(j)
+	if not found:
+		return out
+	var cells: Array = []
+	var c := g0
+	while c != -1:
+		cells.push_front(c)
+		c = prev[c]
+	# 見通しのきく所は飛ばして、なめらかにする
+	var pts: Array = []
+	for i in cells:
+		pts.append(cell_center(i))
+	pts[pts.size() - 1] = to
+	var cur := from
+	var k := 0
+	while k < pts.size():
+		var far := k
+		for m in range(pts.size() - 1, k, -1):
+			if line_clear(cur, pts[m]):
+				far = m
+				break
+		out.append(pts[far])
+		cur = pts[far]
+		k = far + 1
+	return out
+
+
+func _grid_of(p: Vector2) -> int:
+	var q := (p - position) / CELL + Vector2(radius_cells + 0.5, radius_cells + 0.5)
+	return clampi(int(floor(q.y)), 0, size - 1) * size + clampi(int(floor(q.x)), 0, size - 1)
+
+
+## p から一番近い、外に面した生きているマス（なければ -1）。近くに候補がないときの保険。
+func nearest_exposed(p: Vector2) -> int:
+	var q := (p - position) / CELL + Vector2(radius_cells, radius_cells)
+	var cx := clampi(int(round(q.x)), 0, size - 1)
+	var cy := clampi(int(round(q.y)), 0, size - 1)
+	for r in range(0, size):
+		for y in range(maxi(0, cy - r), mini(size, cy + r + 1)):
+			for x in range(maxi(0, cx - r), mini(size, cx + r + 1)):
+				if absi(x - cx) != r and absi(y - cy) != r:
+					continue
+				var i := y * size + x
+				if hp[i] > 0.0 and is_exposed(i):
+					return i
+	return -1
 
 
 ## world_pos が岩の中なら、外向きにたどって一番近い入れる場所を返す
@@ -524,26 +632,38 @@ func _process(delta: float) -> void:
 	if _dirty:
 		_dirty = false
 		_tex.update(_img)
+	_shader_mat.set_shader_parameter("time", _t)
 	queue_redraw()
+	_marks.queue_redraw()
 
 
 func _draw() -> void:
 	if _tex == null:
 		return
-	for k in 6:
-		draw_circle(Vector2.ZERO, outer + 8.0 + k * 9.0, Color(_glow, 0.03))
-	var half := (size * CELL) * 0.5
-	draw_texture_rect(_tex, Rect2(-half, -half, size * CELL, size * CELL), false)
-	# 表面に出てきた遺物・宝箱は光る（透視スキャンがあれば埋まっていても見える）
+	# 大気の光（マス目の後ろ）
+	var glow: Texture2D = Fx.tex("res://assets/fx/circle_05.png")
+	var gr := outer * 2.6
+	draw_texture_rect(glow, Rect2(-gr * 0.5, -gr * 0.5, gr, gr), false, Color(_glow, 0.22))
+	for k in 5:
+		draw_circle(Vector2.ZERO, outer + 6.0 + k * 10.0, Color(_glow, 0.025))
+
+
+## 表面に出てきた遺物・宝箱は光る（透視スキャンがあれば埋まっていても見える）
+func _draw_marks() -> void:
 	var see_all := GameState.skill_level("vision") > 0
 	var blink := 0.5 + 0.5 * sin(_t * 5.0)
+	var star: Texture2D = Fx.tex("res://assets/fx/star_06.png")
 	for i in buried:
 		if hp[i] <= 0.0:
 			continue
-		if not see_all and not is_exposed(i):
+		var exposed := is_exposed(i)
+		if not see_all and not exposed:
 			continue
 		var p := cell_center(i) - position
 		var is_relic: bool = int(block[i]) == GameState.B.RELIC
 		var col := Color(0.4, 1.0, 0.9) if is_relic else Color(1.0, 0.85, 0.3)
-		draw_rect(Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)), Color(col, 0.35 + 0.5 * blink))
-		draw_rect(Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)), col, false, 1.5)
+		var a := (0.35 + 0.5 * blink) * (1.0 if exposed else 0.5)
+		_marks.draw_rect(Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)), Color(col, a * 0.6))
+		_marks.draw_rect(Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)), col, false, 1.0)
+		var sz := CELL * (2.0 + blink)
+		_marks.draw_texture_rect(star, Rect2(p - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), false, Color(col, a))
