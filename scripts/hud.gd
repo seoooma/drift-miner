@@ -34,7 +34,6 @@ var _map_zoom: float = 0.8
 var _msg_panel: PanelContainer
 var _msg_box: VBoxContainer
 var _top_h: float = 112.0
-var _carry_sel: String = ""  # 惑星クリアの画面で選んだ、持ち越す遺物
 var _respec_arm: bool = false  # 振り直しボタンを1回押した（もう一度で実行）
 
 
@@ -889,11 +888,8 @@ func _open_relics() -> void:
 	_clear(_msg_box)
 	var gs := GameState
 	_title(_msg_box, "この惑星で見つけた遺物", 22)
-	if gs.carried_relic != "":
-		var cr := _relic_def(gs.carried_relic)
-		_title(_msg_box, "持ち越し：%s（効果は半分）\n%s" % [cr["name"], cr["desc"]], 15, Neon.LIME)
 	if gs.relics.is_empty():
-		_title(_msg_box, "まだ無し。岩の中に埋まっていて、掘り当てると光る。\n効果はこの惑星にいる間だけ続く。惑星を割るとき1つだけ持ち越せる", 15, Color(1, 1, 1, 0.75))
+		_title(_msg_box, "まだ無し。岩の中に埋まっていて、掘り当てると光る。\n効果はこの惑星にいる間だけ続く", 15, Color(1, 1, 1, 0.75))
 	else:
 		var counts := {}
 		for r in gs.relics:
@@ -907,26 +903,6 @@ func _open_relics() -> void:
 	var back := _wide(_msg_box, "閉じる", 48, 17)
 	back.pressed.connect(_close)
 	_msg_panel.visible = true
-
-
-func _relic_def(id: String) -> Dictionary:
-	for r in GameState.RELICS:
-		if r["id"] == id:
-			return r
-	return {"name": id, "desc": ""}
-
-
-## 持ち越せる遺物：この惑星で見つけたものと、いま持ち越しているもの（多い順）
-func _carry_options() -> Array:
-	var gs := GameState
-	var counts := {}
-	for r in gs.relics:
-		counts[r] = int(counts.get(r, 0)) + 1
-	if gs.carried_relic != "" and not counts.has(gs.carried_relic):
-		counts[gs.carried_relic] = 0
-	var ids: Array = counts.keys()
-	ids.sort_custom(func(a, b): return int(counts[a]) > int(counts[b]))
-	return ids
 
 
 func show_clear(extra: Dictionary, next: Array) -> void:
@@ -948,35 +924,11 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	got.text = "[center]この惑星で集めた素材\n%s%s[/center]" % [_mat_bb(gs.mats_this_planet, false), ("\n核の回収ボーナス " + _mat_bb(extra, false)) if not extra.is_empty() else ""]
 	_msg_box.add_child(got)
 	_title(_msg_box, "クレジット・ツール・遺物は次の惑星でリセット。素材とスキルは残る", 13, Color(1, 1, 1, 0.6))
-	# 遺物を1つだけ持ち越す（効果は半分）
-	var opts := _carry_options()
-	if not opts.is_empty():
-		if not opts.has(_carry_sel):
-			_carry_sel = String(opts[0])
-		_title(_msg_box, "次の惑星へ持ち越す遺物（1つ・効果は半分）", 15, Neon.CYAN)
-		var grid := GridContainer.new()
-		grid.columns = 2
-		grid.add_theme_constant_override("h_separation", 6)
-		grid.add_theme_constant_override("v_separation", 6)
-		_msg_box.add_child(grid)
-		var bw := (_panel_w() - 30.0) * 0.5
-		for id in opts + [""]:
-			var rid := String(id)
-			var label := "持ち越さない" if rid == "" else String(_relic_def(rid)["name"])
-			var b := _button(("▶ " if rid == _carry_sel else "") + label, Vector2(bw, 40), 14)
-			if rid == _carry_sel:
-				b.add_theme_color_override("font_color", Neon.CYAN)
-			b.pressed.connect(func():
-				_carry_sel = rid
-				show_clear(extra, next))
-			grid.add_child(b)
-	else:
-		_carry_sel = ""
 	_title(_msg_box, "次の惑星（ずっと硬くなる）" if next.size() == 1 else "次の惑星を選ぶ", 17)
 	for tid in next:
 		var tr := gs.trait_def(String(tid))
 		var b := _wide(_msg_box, "惑星 %d：%s\n%s" % [gs.planet + 1, tr["name"], tr["desc"]], 64, 16)
-		b.pressed.connect(func(): main.go_next(String(tid), _carry_sel))
+		b.pressed.connect(func(): main.go_next(String(tid)))
 	var tree := _wide(_msg_box, "先にスキルマップを見る", 44, 15)
 	tree.pressed.connect(func():
 		_after_tree = func(): show_clear(extra, next)

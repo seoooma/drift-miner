@@ -2,7 +2,6 @@ extends Node
 ## ゲームの状態（Autoload）。
 ## 惑星（ラン）：クレジット、ツールのレベル、見つけた遺物、掘った跡。惑星を割ると次の惑星でリセット。
 ## 永続：素材（鉄・銅・金・結晶）とスキルツリー。素材はブロックを砕くと手に入り、スキルの強化に使う。
-## 遺物は惑星を割るときに1つだけ次の惑星へ持ち越せる（効果は半分）。
 
 signal changed
 
@@ -153,7 +152,6 @@ var planet_time: float = 0.0
 var saved_hp := PackedFloat32Array()
 var income_rate: float = 0.0
 var next_traits: Array = []
-var carried_relic: String = ""  # 前の惑星から持ち越した遺物（効果は半分）
 var compare_time: float = 0.0  # 惑星クリアの画面で比べる、前の惑星の所要時間
 
 # --- 永続 ---
@@ -226,7 +224,7 @@ static func fmt(x: float) -> String:
 # ---------------------------------------------------------------- 惑星
 
 
-func start_planet(p: int, t: String, carry: String = "") -> void:
+func start_planet(p: int, t: String) -> void:
 	planet = p
 	trait_id = t
 	run_seed = randi()
@@ -236,7 +234,6 @@ func start_planet(p: int, t: String, carry: String = "") -> void:
 		tool_levels[td["id"]] = 0
 	tool_levels["drone"] = 1
 	relics = []
-	carried_relic = carry
 	mats_this_planet = {}
 	for m in MATS:
 		mats_this_planet[m] = 0.0
@@ -292,9 +289,8 @@ func add_mat(m: String, amount: float) -> float:
 	return a
 
 
-## 遺物の数。持ち越した遺物は半分（0.5個）として数える。
-func relic_count(id: String) -> float:
-	return float(relics.count(id)) + (0.5 if carried_relic == id else 0.0)
+func relic_count(id: String) -> int:
+	return relics.count(id)
 
 
 func add_random_relic() -> Dictionary:
@@ -442,7 +438,7 @@ func scan_radius() -> int:
 
 
 func drone_count() -> int:
-	return 1 + skill_level("drone_count") + int(2.0 * relic_count("drone"))
+	return 1 + skill_level("drone_count") + 2 * relic_count("drone")
 
 
 # ---------------------------------------------------------------- スキルツリー
@@ -655,7 +651,6 @@ func save() -> void:
 	cfg.set_value("run", "time", planet_time)
 	cfg.set_value("run", "hp", saved_hp)
 	cfg.set_value("run", "income_rate", income_rate)
-	cfg.set_value("run", "carried_relic", carried_relic)
 	cfg.set_value("meta", "prev_time", prev_time)
 	cfg.set_value("meta", "respec_ready", respec_ready)
 	cfg.set_value("meta", "mats", mats)
@@ -683,7 +678,6 @@ func _load() -> void:
 	planet_time = float(cfg.get_value("run", "time", 0.0))
 	saved_hp = cfg.get_value("run", "hp", PackedFloat32Array())
 	income_rate = float(cfg.get_value("run", "income_rate", 0.0))
-	carried_relic = String(cfg.get_value("run", "carried_relic", ""))
 	prev_time = float(cfg.get_value("meta", "prev_time", 0.0))
 	respec_ready = bool(cfg.get_value("meta", "respec_ready", false))
 	var mm: Dictionary = cfg.get_value("meta", "mats", {})

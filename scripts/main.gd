@@ -330,9 +330,9 @@ func _on_cleared() -> void:
 	gs.save()
 
 
-func go_next(trait_id: String, carry: String = "") -> void:
+func go_next(trait_id: String) -> void:
 	var gs := GameState
-	gs.start_planet(gs.planet + 1, trait_id, carry)
+	gs.start_planet(gs.planet + 1, trait_id)
 	hud.hide_panels()
 	get_tree().paused = false
 	build_planet()
