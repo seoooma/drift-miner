@@ -8,7 +8,7 @@ const VIEW_CELLS := 20.0  # 画面の短い辺に並ぶマスの数（ブロッ�
 const HudScript := preload("res://scripts/hud.gd")
 const BackdropScript := preload("res://scripts/backdrop.gd")
 
-var backdrop: Node2D
+var backdrop: CanvasLayer
 var planet: Planet
 var tools: Tools
 var fx_layer: Node2D
@@ -26,6 +26,8 @@ var _zoom: float = 0.0
 var focus := Vector2.ZERO  # ツールが狙う中心（ワールド座標）
 var _focus_goal := Vector2.ZERO
 var _focus_t: float = 0.0
+var _shake: float = 0.0
+var _fx_budget: float = 20.0  # 1秒に出せる破片演出の数（多すぎると重くなる）
 var _manual := false  # プレイヤーが指定した移動先へ向かっている／そこを掘っている
 
 
@@ -97,6 +99,7 @@ func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 
 
 func _process(delta: float) -> void:
+	_fx_budget = minf(20.0, _fx_budget + delta * 24.0)
 	_update_focus(delta)
 	_fit_camera(delta)
 	var gs := GameState
@@ -133,9 +136,7 @@ func _update_focus(delta: float) -> void:
 			_manual = false
 		if not _manual:
 			var t := planet.targets_near(focus, gs.scan_radius(), 0.6)
-			var i := int(t[0]) if not t.is_empty() else planet.raycast(focus, planet.position)
-			if i < 0:
-				i = planet.random_surface_cell()
+			var i := int(t[0]) if not t.is_empty() else planet.nearest_exposed(focus)
 			if i >= 0:
 				_focus_goal = planet.hover_point(i, Planet.CELL)
 	var sp := 70.0 if _manual else maxf(18.0, focus.distance_to(_focus_goal) * 1.5)
@@ -154,6 +155,14 @@ func _fit_camera(delta: float) -> void:
 	var vp := get_viewport().get_visible_rect().size
 	var goal := focus - (area.get_center() - vp * 0.5) / _zoom
 	camera.position = goal if camera.position == Vector2.ZERO else camera.position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0))
+	# 画面の揺れ
+	_shake = maxf(0.0, _shake - delta * 18.0)
+	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake / _zoom * 2.0
+
+
+## 画面を揺らす（爆発など）
+func shake(amount: float) -> void:
+	_shake = clampf(maxf(_shake, amount), 0.0, 12.0)
 
 
 func _auto_buy() -> void:
@@ -182,15 +191,29 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 	_pop_acc += value
 	_pop_pos = pos
 	var m := String(gs.BLOCKS[b]["mat"])
+	var col: Color = gs.BLOCK_COLORS.get(b, Color(0.6, 0.55, 0.6))
+	var show := _fx_budget >= 1.0
+	if show:
+		_fx_budget -= 1.0
+		Fx.burst(fx_layer, pos, col, 5, 70.0)
 	if m != "":
 		var got := gs.add_mat(m, _mat_amount())
 		var e: Array = _mat_pop.get(m, [0.0, pos])
 		_mat_pop[m] = [float(e[0]) + got, pos]
-		if b == gs.B.GOLD or b == gs.B.CRYSTAL:
-			Fx.burst(fx_layer, pos, gs.BLOCK_COLORS[b], 8, 90.0)
+		if show:
+			Fx.sparks(fx_layer, pos, col.lightened(0.3), 6 if b == gs.B.IRON or b == gs.B.COPPER else 12, 80.0)
+		if show and (b == gs.B.GOLD or b == gs.B.CRYSTAL):
+			Fx.flash(fx_layer, pos, Color(col, 0.7), Planet.CELL * 2.5, 0.3)
+			Audio.play("ore_crystal")
+		else:
+			Audio.play("ore_metal")
 	elif b == gs.B.RELIC:
 		var r := gs.add_random_relic()
 		Fx.burst(fx_layer, pos, Color(0.4, 1.0, 0.9), 40, 220.0)
+		Fx.sparks(fx_layer, pos, Color(0.5, 1.0, 0.95), 24, 160.0)
+		Fx.ring(fx_layer, pos, Color(0.4, 1.0, 0.9), Planet.CELL * 8.0)
+		Fx.flash(fx_layer, pos, Color(0.4, 1.0, 0.9), Planet.CELL * 6.0, 0.6)
+		Audio.play("relic")
 		hud.relic_found(r)
 	elif b == gs.B.CACHE:
 		var cr := gs.cell_value(planet.depth[planet.cell_at(pos)] if planet.cell_at(pos) >= 0 else 0.0) * 80.0
@@ -199,11 +222,22 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		var mm: String = mats[randi() % mats.size()]
 		var got := gs.add_mat(mm, _mat_amount() * randf_range(4.0, 10.0))
 		Fx.burst(fx_layer, pos, Color(1.0, 0.85, 0.3), 36, 200.0)
+		Fx.sparks(fx_layer, pos, Color(1.0, 0.9, 0.5), 20, 140.0)
+		Fx.ring(fx_layer, pos, Color(1.0, 0.85, 0.3), Planet.CELL * 6.0)
+		Audio.play("cache")
 		Fx.popup(fx_layer, pos, "宝箱！ +%s CR・%s +%s" % [gs.fmt(cr), gs.MAT_NAMES[mm], gs.fmt(got)], Color(1.0, 0.9, 0.4))
+	else:
+		Audio.play("break")
 
 
 func on_explosion(c: Vector2, r: float) -> void:
-	Fx.burst(fx_layer, c, Color(1.0, 0.45, 0.2), 30, r * 4.0)
+	if _fx_budget < 3.0:
+		return
+	_fx_budget -= 3.0
+	Fx.explosion(fx_layer, c, r * 1.3)
+	Fx.burst(fx_layer, c, Color(1.0, 0.45, 0.2), 18, r * 4.0)
+	Audio.play("blast")
+	shake(4.0)
 
 
 func _on_cleared() -> void:
@@ -212,7 +246,12 @@ func _on_cleared() -> void:
 	gs.earn(bonus)
 	var extra := gs.finish_planet()
 	Fx.burst(fx_layer, focus, Color(1.0, 0.85, 0.5), 120, 520.0)
+	Fx.explosion(fx_layer, focus, Planet.CELL * 14.0)
+	Fx.ring(fx_layer, focus, Color(1.0, 0.85, 0.5), Planet.CELL * 30.0, 0.9)
+	Fx.flash(fx_layer, focus, Color(1.0, 0.9, 0.7), Planet.CELL * 40.0, 1.0)
 	Fx.popup(fx_layer, focus, "惑星を破壊！", Color(1.0, 0.9, 0.5))
+	Audio.play("clear")
+	shake(12.0)
 	await get_tree().create_timer(1.2).timeout
 	get_tree().paused = true
 	hud.show_clear(extra, gs.roll_next_traits())
@@ -236,11 +275,14 @@ func set_destination(world_pos: Vector2) -> void:
 	# 何もない宇宙を指したときは、その真下の地表へ降りる
 	if planet.targets_near(_focus_goal, 6).is_empty():
 		var i := planet.raycast(_focus_goal, planet.position)
+		if i < 0 or not planet.is_exposed(i):
+			i = planet.nearest_exposed(_focus_goal)
 		if i >= 0:
 			_focus_goal = planet.hover_point(i, Planet.CELL)
 	_manual = true
 	_focus_t = 0.5
 	tools.tap_effect(_focus_goal)
+	Audio.play("move")
 	tools.rescan()
 
 
