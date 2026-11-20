@@ -21,6 +21,7 @@ var total_cells: int = 0
 var done: bool = false
 var outer: float = 0.0  # いま残っている一番外側のマスまでの距離（ワールド単位）
 var buried: Array = []  # 遺物・宝箱のマス番号
+var air := PackedByteArray()  # 1 = 惑星の外とつながった空き（機体が入れる所）
 
 var _img: Image
 var _tex: ImageTexture
@@ -127,6 +128,7 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 
 	_img = Image.create(size, size, false, Image.FORMAT_RGBA8)
 	_redraw_all()
+	_rebuild_air()
 	_update_outer()
 
 
@@ -174,7 +176,114 @@ func restore(saved: PackedFloat32Array) -> void:
 			still.append(i)
 	buried = still
 	_redraw_all()
+	_rebuild_air()
 	_update_outer()
+
+
+## 惑星の外とつながった空きを調べ直す（外周から塗りつぶす）
+func _rebuild_air() -> void:
+	air.resize(hp.size())
+	air.fill(0)
+	var q: Array = []
+	for y in size:
+		for x in size:
+			if x == 0 or y == 0 or x == size - 1 or y == size - 1:
+				var i := y * size + x
+				if hp[i] <= 0.0 and air[i] == 0:
+					air[i] = 1
+					q.append(i)
+	_flood(q)
+
+
+func _flood(q: Array) -> void:
+	while not q.is_empty():
+		var i: int = q.pop_back()
+		var x := i % size
+		var y := i / size
+		for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx: int = x + o.x
+			var ny: int = y + o.y
+			if nx < 0 or ny < 0 or nx >= size or ny >= size:
+				continue
+			var j := ny * size + nx
+			if air[j] == 0 and hp[j] <= 0.0:
+				air[j] = 1
+				q.append(j)
+
+
+## 砕けたマスが外とつながっていれば、そこから先の空きも外とつなぐ
+func _open_cell(i: int) -> void:
+	var x := i % size
+	var y := i / size
+	var touch := x == 0 or y == 0 or x == size - 1 or y == size - 1
+	if not touch:
+		for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			if air[(y + o.y) * size + x + o.x] == 1:
+				touch = true
+				break
+	if touch:
+		air[i] = 1
+		_flood([i])
+
+
+## その場所に機体が入れるか（惑星の外か、外とつながった掘り跡）
+func is_open(world_pos: Vector2) -> bool:
+	var i := cell_at(world_pos)
+	return i < 0 or air[i] == 1
+
+
+## マス i の空いている側の向き（外とつながった隣のマスの方向の平均）
+func open_dir(i: int) -> Vector2:
+	var x := i % size
+	var y := i / size
+	var v := Vector2.ZERO
+	for oy in [-1, 0, 1]:
+		for ox in [-1, 0, 1]:
+			if ox == 0 and oy == 0:
+				continue
+			var nx: int = x + ox
+			var ny: int = y + oy
+			if nx < 0 or ny < 0 or nx >= size or ny >= size or air[ny * size + nx] == 1:
+				v += Vector2(ox, oy).normalized()
+	return v.normalized() if v.length() > 0.01 else outward(i)
+
+
+## マス i を狙うときに機体が浮かぶ位置（空いている側、入れる所だけ）
+func hover_point(i: int, dist: float) -> Vector2:
+	var c := cell_center(i)
+	var d := open_dir(i)
+	var k := dist
+	while k > CELL * 0.6:
+		var p := c + d * k
+		if is_open(p):
+			return p
+		k -= CELL * 0.5
+	return c + d * CELL
+
+
+## world_pos が岩の中なら、外向きにたどって一番近い入れる場所を返す
+func nearest_open(world_pos: Vector2) -> Vector2:
+	if is_open(world_pos):
+		return world_pos
+	var best := Vector2.INF
+	var c0 := cell_at(world_pos)
+	var cx := c0 % size
+	var cy := c0 / size
+	for r in range(1, size):
+		var bd := INF
+		for y in range(cy - r, cy + r + 1):
+			for x in range(cx - r, cx + r + 1):
+				if absi(x - cx) != r and absi(y - cy) != r:
+					continue
+				var p := position + Vector2(x - radius_cells, y - radius_cells) * CELL
+				if x < 0 or y < 0 or x >= size or y >= size or air[y * size + x] == 1:
+					var d := p.distance_squared_to(world_pos)
+					if d < bd:
+						bd = d
+						best = p
+		if best != Vector2.INF:
+			return best
+	return world_pos
 
 
 func world_radius() -> float:
@@ -206,7 +315,7 @@ func is_exposed(i: int) -> bool:
 	for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		var nx: int = x + o.x
 		var ny: int = y + o.y
-		if nx < 0 or ny < 0 or nx >= size or ny >= size or hp[ny * size + nx] <= 0.0:
+		if nx < 0 or ny < 0 or nx >= size or ny >= size or air[ny * size + nx] == 1:
 			return true
 	return false
 
@@ -260,6 +369,7 @@ func hit(i: int, damage: float) -> bool:
 		alive_count -= 1
 		_img.set_pixel(x, y, Color(0, 0, 0, 0))
 		_dirty = true
+		_open_cell(i)
 		var b := int(block[i])
 		var v := GameState.cell_value(depth[i]) * float(GameState.BLOCKS[b]["value"])
 		cell_broken.emit(cell_center(i), v, b)
@@ -305,6 +415,7 @@ func _explode_at(c: Vector2, r: float, dmg: float) -> void:
 		main.on_explosion(c, r)
 
 
+## 範囲攻撃。外に面しているマスだけに当たる（岩の内側には届かない）。
 func hit_area(center: Vector2, r: float, damage: float) -> void:
 	var cells: Array = []
 	var rc := int(ceil(r / CELL))
@@ -318,7 +429,7 @@ func hit_area(center: Vector2, r: float, damage: float) -> void:
 			if x < 0 or y < 0 or x >= size or y >= size:
 				continue
 			var i := y * size + x
-			if is_alive(i) and cell_center(i).distance_to(center) <= r:
+			if is_alive(i) and cell_center(i).distance_to(center) <= r and is_exposed(i):
 				cells.append(i)
 	if cells.is_empty():
 		return
@@ -350,7 +461,7 @@ func priority(i: int) -> float:
 
 ## p の周り（半径 r マス）で、表面に出ている生きたマスを「狙う順」に並べて返す。
 ## 近さ・鉱石の価値・浅さで点数を付ける（深い所より表面を広く削っていく）。
-func targets_near(p: Vector2, r: int) -> Array:
+func targets_near(p: Vector2, r: int, dist_w: float = 1.0) -> Array:
 	var c0 := cell_at(p)
 	var cx: int
 	var cy: int
@@ -370,7 +481,7 @@ func targets_near(p: Vector2, r: int) -> Array:
 			var d := Vector2(x - cx, y - cy).length()
 			if d > r:
 				continue
-			scored.append([priority(i) * 3.0 - d - depth[i] * 80.0, i])
+			scored.append([priority(i) * 3.0 - d * dist_w - depth[i] * 80.0, i])
 	scored.sort_custom(func(a, b): return a[0] > b[0])
 	var out: Array = []
 	for e in scored:

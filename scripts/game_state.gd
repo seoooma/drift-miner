@@ -63,46 +63,72 @@ const RELICS := [
 	{"id": "power", "name": "古代の動力炉", "desc": "全ツールの威力 ×1.5"},
 	{"id": "cr", "name": "黄金の秤", "desc": "獲得クレジット ×1.5"},
 	{"id": "drone", "name": "眠れる無人機", "desc": "採掘ドローン +2機"},
-	{"id": "tap", "name": "巨人の槌", "desc": "タップの威力 ×4"},
+	{"id": "tap", "name": "精密照準器", "desc": "採掘ドローンの威力 ×2"},
 	{"id": "cost", "name": "商人の印章", "desc": "ツールの強化費用 -15%"},
 	{"id": "mat", "name": "鉱脈の羅針盤", "desc": "素材の入手量 ×1.3"},
 ]
 
-## スキルツリー。pos は（列, 段）。parent を Lv1 以上にすると開放。cost は Lv0 のときの素材。
+## スキルマップ。基地から5つの系統が放射状に広がり、系統のあいだも橋でつながる網の目。
+## links のどれか（逆向きも含む）が Lv1 以上なら習得できる。pos はマップ上の座標。
+## stat があるのは小さなノード（同じ stat の合計で効く）。cost は Lv0 のときの素材。
 const SKILLS := [
-	{"id": "base", "name": "採掘基地", "desc": "すべての始まり", "max": 1, "cost": {}, "growth": 1.0, "parent": "", "pos": Vector2i(2, 0)},
-	# 列0：採掘力
-	{"id": "drone_pow", "name": "ドローン出力", "desc": "採掘ドローンの威力 +60%", "max": 15, "cost": {"iron": 48}, "growth": 1.45, "parent": "base", "pos": Vector2i(0, 1)},
-	{"id": "drone_count", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": {"copper": 72}, "growth": 2.2, "parent": "drone_pow", "pos": Vector2i(0, 2)},
-	{"id": "tap_pow", "name": "手掘り強化", "desc": "タップの威力 ×2", "max": 8, "cost": {"iron": 72, "copper": 36}, "growth": 1.7, "parent": "drone_count", "pos": Vector2i(0, 3)},
-	{"id": "resonance", "name": "共振増幅", "desc": "全ツールの威力 +30%", "max": 20, "cost": {"gold": 48}, "growth": 1.4, "parent": "tap_pow", "pos": Vector2i(0, 4)},
-	{"id": "overdrive", "name": "過負荷運転", "desc": "全ツールの威力 ×2", "max": 5, "cost": {"crystal": 60}, "growth": 2.0, "parent": "resonance", "pos": Vector2i(0, 5)},
-	# 列1：ツールの解放
-	{"id": "cutter", "name": "パルスドリル", "desc": "パルスドリルを解放", "max": 1, "cost": {"iron": 144}, "growth": 1.0, "parent": "base", "pos": Vector2i(1, 1)},
-	{"id": "laser", "name": "精密レーザー", "desc": "精密レーザーを解放", "max": 1, "cost": {"iron": 360, "copper": 180}, "growth": 1.0, "parent": "cutter", "pos": Vector2i(1, 2)},
-	{"id": "bomb", "name": "重力爆雷", "desc": "重力爆雷を解放", "max": 1, "cost": {"copper": 480, "gold": 120}, "growth": 1.0, "parent": "laser", "pos": Vector2i(1, 3)},
-	{"id": "lance", "name": "コアランス", "desc": "コアランスを解放", "max": 1, "cost": {"gold": 480, "crystal": 96}, "growth": 1.0, "parent": "bomb", "pos": Vector2i(1, 4)},
-	{"id": "swarm", "name": "ナノスウォーム", "desc": "ナノスウォームを解放", "max": 1, "cost": {"gold": 1440, "crystal": 480}, "growth": 1.0, "parent": "lance", "pos": Vector2i(1, 5)},
-	{"id": "mastery", "name": "ツール熟練", "desc": "Lv25ごとの倍率 ×2 → +0.25", "max": 4, "cost": {"crystal": 240}, "growth": 2.0, "parent": "swarm", "pos": Vector2i(1, 6)},
-	# 列2：経済
-	{"id": "cr_gain", "name": "鑑定術", "desc": "獲得クレジット +35%", "max": 20, "cost": {"iron": 60}, "growth": 1.4, "parent": "base", "pos": Vector2i(2, 1)},
-	{"id": "discount", "name": "量産体制", "desc": "ツールの強化費用 -5%", "max": 10, "cost": {"copper": 96}, "growth": 1.55, "parent": "cr_gain", "pos": Vector2i(2, 2)},
-	{"id": "start_cr", "name": "初期資金", "desc": "惑星に着いたときのクレジット ×4", "max": 6, "cost": {"gold": 72}, "growth": 2.0, "parent": "discount", "pos": Vector2i(2, 3)},
-	{"id": "offline", "name": "放置報酬", "desc": "閉じている間の報酬 +30%・上限 +1時間", "max": 6, "cost": {"gold": 96}, "growth": 1.8, "parent": "start_cr", "pos": Vector2i(2, 4)},
-	{"id": "interest", "name": "複利運用", "desc": "10秒ごとに所持クレジットの1%を得る", "max": 3, "cost": {"crystal": 120}, "growth": 2.5, "parent": "offline", "pos": Vector2i(2, 5)},
-	# 列3：探査
-	{"id": "mat_find", "name": "鉱脈探知", "desc": "素材の入手量 +10%", "max": 15, "cost": {"iron": 72, "copper": 24}, "growth": 1.45, "parent": "base", "pos": Vector2i(3, 1)},
-	{"id": "vision", "name": "透視スキャン", "desc": "埋まった遺物と宝箱が光って見える", "max": 1, "cost": {"copper": 240}, "growth": 1.0, "parent": "mat_find", "pos": Vector2i(3, 2)},
-	{"id": "relic_luck", "name": "遺物の勘", "desc": "遺物と宝箱が出やすくなる +40%", "max": 5, "cost": {"gold": 120}, "growth": 1.8, "parent": "vision", "pos": Vector2i(3, 3)},
-	{"id": "refine", "name": "精錬", "desc": "素材が2倍になる確率 +10%", "max": 5, "cost": {"gold": 144, "crystal": 36}, "growth": 1.8, "parent": "relic_luck", "pos": Vector2i(3, 4)},
-	{"id": "core_bonus", "name": "核の回収", "desc": "惑星を割ったとき、集めた素材の +20% を追加で得る", "max": 5, "cost": {"crystal": 144}, "growth": 2.0, "parent": "refine", "pos": Vector2i(3, 5)},
-	# 列4：自動化と航路
-	{"id": "auto_tap", "name": "自動タップ", "desc": "毎秒1回、自動で手掘りする", "max": 5, "cost": {"iron": 120}, "growth": 1.9, "parent": "base", "pos": Vector2i(4, 1)},
-	{"id": "auto_buy", "name": "自動強化", "desc": "一番安いツールを自動で強化", "max": 1, "cost": {"copper": 300, "iron": 300}, "growth": 1.0, "parent": "auto_tap", "pos": Vector2i(4, 2)},
-	{"id": "blast", "name": "誘爆制御", "desc": "爆薬岩の爆発の範囲と威力が上がる", "max": 5, "cost": {"gold": 96}, "growth": 1.8, "parent": "auto_buy", "pos": Vector2i(4, 3)},
-	{"id": "navigator", "name": "航路選択", "desc": "次の惑星を候補から選べる（Lv2で3択）", "max": 2, "cost": {"crystal": 72}, "growth": 3.0, "parent": "blast", "pos": Vector2i(4, 4)},
+	{"id": "base", "name": "採掘基地", "desc": "すべての始まり", "max": 1, "cost": {}, "growth": 1.0, "links": [], "pos": Vector2(0, 0), "branch": "", "stat": "", "amt": 0.0},
+	{"id": "a1", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"iron": 30}, "growth": 1.6, "links": ["base"], "pos": Vector2(0, -118), "branch": "A", "stat": "pow", "amt": 0.15},
+	{"id": "drone_pow", "name": "ドローン出力", "desc": "採掘ドローンの威力 +60%", "max": 15, "cost": {"iron": 48}, "growth": 1.45, "links": ["a1"], "pos": Vector2(0, -236), "branch": "A", "stat": "", "amt": 0.0},
+	{"id": "drone_count", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": {"copper": 72}, "growth": 2.2, "links": ["drone_pow"], "pos": Vector2(-68, -347), "branch": "A", "stat": "", "amt": 0.0},
+	{"id": "a2", "name": "ドローン調整", "desc": "採掘ドローンの威力 +25%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["drone_pow"], "pos": Vector2(68, -347), "branch": "A", "stat": "dpow", "amt": 0.25},
+	{"id": "a3", "name": "ドローン調整", "desc": "採掘ドローンの威力 +25%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["drone_count"], "pos": Vector2(-106, -460), "branch": "A", "stat": "dpow", "amt": 0.25},
+	{"id": "resonance", "name": "共振増幅", "desc": "全ツールの威力 ×1.45", "max": 20, "cost": {"gold": 48}, "growth": 1.4, "links": ["a2"], "pos": Vector2(74, -466), "branch": "A", "stat": "", "amt": 0.0},
+	{"id": "thrust", "name": "推進器", "desc": "機体の移動速度 +40%", "max": 3, "cost": {"iron": 120, "copper": 60}, "growth": 1.9, "links": ["a3"], "pos": Vector2(-113, -579), "branch": "A", "stat": "", "amt": 0.0},
+	{"id": "a4", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["resonance"], "pos": Vector2(82, -584), "branch": "A", "stat": "pow", "amt": 0.15},
+	{"id": "overdrive", "name": "過負荷運転", "desc": "全ツールの威力 ×2.5", "max": 5, "cost": {"crystal": 60}, "growth": 2.0, "links": ["thrust", "a4"], "pos": Vector2(-12, -708), "branch": "A", "stat": "", "amt": 0.0},
+	{"id": "cutter", "name": "パルスドリル", "desc": "パルスドリルを解放", "max": 1, "cost": {"iron": 144}, "growth": 1.0, "links": ["base"], "pos": Vector2(112, -36), "branch": "B", "stat": "", "amt": 0.0},
+	{"id": "b1", "name": "部品の規格化", "desc": "ツールの強化費用 -4%", "max": 3, "cost": {"iron": 60}, "growth": 1.6, "links": ["cutter"], "pos": Vector2(224, -73), "branch": "B", "stat": "cost", "amt": 0.04},
+	{"id": "laser", "name": "精密レーザー", "desc": "精密レーザーを解放", "max": 1, "cost": {"iron": 360, "copper": 180}, "growth": 1.0, "links": ["b1"], "pos": Vector2(337, -109), "branch": "B", "stat": "", "amt": 0.0},
+	{"id": "bomb", "name": "重力爆雷", "desc": "重力爆雷を解放", "max": 1, "cost": {"copper": 480, "gold": 120}, "growth": 1.0, "links": ["laser"], "pos": Vector2(424, -207), "branch": "B", "stat": "", "amt": 0.0},
+	{"id": "b2", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["laser"], "pos": Vector2(466, -74), "branch": "B", "stat": "pow", "amt": 0.15},
+	{"id": "lance", "name": "コアランス", "desc": "コアランスを解放", "max": 1, "cost": {"gold": 480, "crystal": 96}, "growth": 1.0, "links": ["bomb"], "pos": Vector2(539, -240), "branch": "B", "stat": "", "amt": 0.0},
+	{"id": "b3", "name": "部品の規格化", "desc": "ツールの強化費用 -4%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["b2"], "pos": Vector2(581, -102), "branch": "B", "stat": "cost", "amt": 0.04},
+	{"id": "swarm", "name": "ナノスウォーム", "desc": "ナノスウォームを解放", "max": 1, "cost": {"gold": 1440, "crystal": 480}, "growth": 1.0, "links": ["lance", "b3"], "pos": Vector2(673, -219), "branch": "B", "stat": "", "amt": 0.0},
+	{"id": "mastery", "name": "ツール熟練", "desc": "Lv25ごとの倍率 ×2 → +0.25", "max": 4, "cost": {"crystal": 240}, "growth": 2.0, "links": ["swarm"], "pos": Vector2(786, -255), "branch": "B", "stat": "", "amt": 0.0},
+	{"id": "cr_gain", "name": "鑑定術", "desc": "獲得クレジット +35%", "max": 20, "cost": {"iron": 60}, "growth": 1.4, "links": ["base"], "pos": Vector2(69, 95), "branch": "C", "stat": "", "amt": 0.0},
+	{"id": "discount", "name": "量産体制", "desc": "ツールの強化費用 -5%", "max": 10, "cost": {"copper": 96}, "growth": 1.55, "links": ["cr_gain"], "pos": Vector2(167, 167), "branch": "C", "stat": "", "amt": 0.0},
+	{"id": "c1", "name": "相場観", "desc": "獲得クレジット +10%", "max": 3, "cost": {"iron": 60}, "growth": 1.6, "links": ["cr_gain"], "pos": Vector2(107, 210), "branch": "C", "stat": "cr", "amt": 0.1},
+	{"id": "start_cr", "name": "初期資金", "desc": "惑星に着いたときのクレジット ×4", "max": 6, "cost": {"gold": 72}, "growth": 2.0, "links": ["discount"], "pos": Vector2(250, 250), "branch": "C", "stat": "", "amt": 0.0},
+	{"id": "c2", "name": "相場観", "desc": "獲得クレジット +10%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["c1"], "pos": Vector2(161, 315), "branch": "C", "stat": "cr", "amt": 0.1},
+	{"id": "offline", "name": "放置報酬", "desc": "閉じている間の報酬 +30%・上限 +1時間", "max": 6, "cost": {"gold": 96}, "growth": 1.8, "links": ["start_cr", "c2"], "pos": Vector2(277, 382), "branch": "C", "stat": "", "amt": 0.0},
+	{"id": "c3", "name": "部品の規格化", "desc": "ツールの強化費用 -4%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["offline"], "pos": Vector2(410, 424), "branch": "C", "stat": "cost", "amt": 0.04},
+	{"id": "interest", "name": "複利運用", "desc": "10秒ごとに所持クレジットの1%を得る", "max": 3, "cost": {"crystal": 120}, "growth": 2.5, "links": ["offline"], "pos": Vector2(277, 521), "branch": "C", "stat": "", "amt": 0.0},
+	{"id": "mat_find", "name": "鉱脈探知", "desc": "素材の入手量 +10%", "max": 15, "cost": {"iron": 72, "copper": 24}, "growth": 1.45, "links": ["base"], "pos": Vector2(-69, 95), "branch": "D", "stat": "", "amt": 0.0},
+	{"id": "d1", "name": "選鉱", "desc": "素材の入手量 +5%", "max": 3, "cost": {"iron": 60}, "growth": 1.6, "links": ["mat_find"], "pos": Vector2(-139, 191), "branch": "D", "stat": "mat", "amt": 0.05},
+	{"id": "vision", "name": "透視スキャン", "desc": "埋まった遺物と宝箱が光って見える", "max": 1, "cost": {"copper": 240}, "growth": 1.0, "links": ["d1"], "pos": Vector2(-161, 315), "branch": "D", "stat": "", "amt": 0.0},
+	{"id": "d2", "name": "選鉱", "desc": "素材の入手量 +5%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["d1"], "pos": Vector2(-250, 250), "branch": "D", "stat": "mat", "amt": 0.05},
+	{"id": "relic_luck", "name": "遺物の勘", "desc": "遺物と宝箱が出やすくなる +40%", "max": 5, "cost": {"gold": 120}, "growth": 1.8, "links": ["vision"], "pos": Vector2(-214, 421), "branch": "D", "stat": "", "amt": 0.0},
+	{"id": "refine", "name": "精錬", "desc": "素材が2倍になる確率 +10%", "max": 5, "cost": {"gold": 144, "crystal": 36}, "growth": 1.8, "links": ["d2"], "pos": Vector2(-334, 334), "branch": "D", "stat": "", "amt": 0.0},
+	{"id": "core_bonus", "name": "核の回収", "desc": "惑星を割ったとき、集めた素材の +20% を追加で得る", "max": 5, "cost": {"crystal": 144}, "growth": 2.0, "links": ["relic_luck", "refine"], "pos": Vector2(-347, 477), "branch": "D", "stat": "", "amt": 0.0},
+	{"id": "auto_scan", "name": "自動探索", "desc": "周りに鉱石がないとき、遠くの鉱脈を探して移動する（探索範囲 +8マス）", "max": 5, "cost": {"iron": 120}, "growth": 1.9, "links": ["base"], "pos": Vector2(-112, -36), "branch": "E", "stat": "", "amt": 0.0},
+	{"id": "auto_buy", "name": "自動強化", "desc": "一番安いツールを自動で強化", "max": 1, "cost": {"copper": 300, "iron": 300}, "growth": 1.0, "links": ["auto_scan"], "pos": Vector2(-224, -73), "branch": "E", "stat": "", "amt": 0.0},
+	{"id": "e1", "name": "姿勢制御", "desc": "機体の移動速度 +25%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["auto_buy"], "pos": Vector2(-350, -55), "branch": "E", "stat": "move", "amt": 0.25},
+	{"id": "blast", "name": "誘爆制御", "desc": "爆薬岩の爆発の範囲と威力が上がる", "max": 5, "cost": {"gold": 96}, "growth": 1.8, "links": ["auto_buy"], "pos": Vector2(-315, -161), "branch": "E", "stat": "", "amt": 0.0},
+	{"id": "e2", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["e1", "blast"], "pos": Vector2(-449, -146), "branch": "E", "stat": "pow", "amt": 0.15},
+	{"id": "navigator", "name": "航路選択", "desc": "次の惑星を候補から選べる（Lv2で3択）", "max": 2, "cost": {"crystal": 72}, "growth": 3.0, "links": ["e2"], "pos": Vector2(-561, -182), "branch": "E", "stat": "", "amt": 0.0},
+	{"id": "x_ab", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["a2", "laser"], "pos": Vector2(229, -315), "branch": "X", "stat": "pow", "amt": 0.15},
+	{"id": "x_bc", "name": "部品の規格化", "desc": "ツールの強化費用 -4%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["laser", "c2"], "pos": Vector2(370, 120), "branch": "X", "stat": "cost", "amt": 0.04},
+	{"id": "x_cd", "name": "相場観", "desc": "獲得クレジット +10%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["start_cr", "vision"], "pos": Vector2(0, 389), "branch": "X", "stat": "cr", "amt": 0.1},
+	{"id": "x_de", "name": "選鉱", "desc": "素材の入手量 +5%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["vision", "e1"], "pos": Vector2(-370, 120), "branch": "X", "stat": "mat", "amt": 0.05},
+	{"id": "x_ea", "name": "姿勢制御", "desc": "機体の移動速度 +25%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["e1", "drone_count"], "pos": Vector2(-229, -315), "branch": "X", "stat": "move", "amt": 0.25},
+	{"id": "y_ab", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["a4", "b3"], "pos": Vector2(388, -535), "branch": "X", "stat": "pow", "amt": 0.15},
+	{"id": "y_cd", "name": "選鉱", "desc": "素材の入手量 +5%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["interest", "core_bonus"], "pos": Vector2(0, 661), "branch": "X", "stat": "mat", "amt": 0.05},
+
 ]
-const BRANCHES := ["採掘力", "ツール", "経済", "探査", "自動化"]
+## 系統の名前と色（マップの見出し）
+const BRANCHES := {
+	"A": {"name": "採掘力", "color": Color(0.35, 0.9, 1.0), "angle": -90.0},
+	"B": {"name": "ツール", "color": Color(1.0, 0.55, 0.3), "angle": -18.0},
+	"C": {"name": "経済", "color": Color(1.0, 0.85, 0.3), "angle": 54.0},
+	"D": {"name": "探査", "color": Color(0.8, 0.5, 1.0), "angle": 126.0},
+	"E": {"name": "自動化", "color": Color(0.45, 1.0, 0.55), "angle": 198.0},
+}
 
 # --- 惑星（ラン） ---
 var run_seed: int = 0
@@ -228,7 +254,7 @@ func cell_value(depth: float) -> float:
 
 
 func cr_mult() -> float:
-	return pow(1.35, skill_level("cr_gain")) * pow(1.5, relic_count("cr"))
+	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * pow(1.5, relic_count("cr"))
 
 
 func earn(amount: float, track: bool = true) -> void:
@@ -238,7 +264,7 @@ func earn(amount: float, track: bool = true) -> void:
 
 
 func mat_mult() -> float:
-	return (1.0 + 0.1 * skill_level("mat_find")) * pow(1.3, relic_count("mat"))
+	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * pow(1.3, relic_count("mat"))
 
 
 func add_mat(m: String, amount: float) -> float:
@@ -308,7 +334,7 @@ func tool_level(id: String) -> int:
 
 
 func dps_mult() -> float:
-	return pow(1.3, skill_level("resonance")) * pow(2.0, skill_level("overdrive")) * pow(1.5, relic_count("power"))
+	return pow(1.45, skill_level("resonance")) * (1.0 + stat("pow")) * pow(2.5, skill_level("overdrive")) * pow(1.5, relic_count("power"))
 
 
 func milestone_mult() -> float:
@@ -321,7 +347,7 @@ func tool_dps_at(id: String, lv: int) -> float:
 	var t := tool_def(id)
 	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult()
 	if id == "drone":
-		d *= 1.0 + 0.6 * skill_level("drone_pow")
+		d *= (1.0 + 0.6 * skill_level("drone_pow") + stat("dpow")) * pow(2.0, relic_count("tap"))
 	return d
 
 
@@ -337,7 +363,7 @@ func total_dps() -> float:
 
 
 func cost_mult() -> float:
-	return pow(0.95, skill_level("discount")) * pow(0.85, relic_count("cost"))
+	return pow(0.95, skill_level("discount")) * maxf(0.3, 1.0 - stat("cost")) * pow(0.85, relic_count("cost"))
 
 
 func upgrade_cost(id: String, n: int = 1) -> float:
@@ -374,8 +400,14 @@ func milestone_frac(id: String) -> float:
 	return float(tool_level(id) % 25) / 25.0
 
 
-func tap_damage() -> float:
-	return maxf(3.0, total_dps() * 0.05) * pow(2.0, skill_level("tap_pow")) * pow(4.0, relic_count("tap"))
+## 機体の移動速度の倍率
+func move_mult() -> float:
+	return 1.0 + 0.4 * skill_level("thrust") + stat("move")
+
+
+## 自動探索で鉄・銅などの鉱脈を探しに行く範囲（マス）
+func scan_radius() -> int:
+	return 16 + 8 * skill_level("auto_scan")
 
 
 func drone_count() -> int:
@@ -405,9 +437,37 @@ func skill_cost(id: String) -> Dictionary:
 	return out
 
 
+## 小さなノードの効果の合計（stat ごと）
+func stat(name: String) -> float:
+	var t := 0.0
+	for sk in SKILLS:
+		if sk["stat"] == name:
+			t += float(sk["amt"]) * skill_level(String(sk["id"]))
+	return t
+
+
+var _adj := {}
+
+
+## つながっているノード（links の逆向きも含む）
+func skill_links(id: String) -> Array:
+	if _adj.is_empty():
+		for sk in SKILLS:
+			_adj[String(sk["id"])] = []
+		for sk in SKILLS:
+			for l in sk["links"]:
+				(_adj[String(sk["id"])] as Array).append(String(l))
+				(_adj[String(l)] as Array).append(String(sk["id"]))
+	return _adj.get(id, [])
+
+
 func skill_open(id: String) -> bool:
-	var p := String(skill_def(id)["parent"])
-	return p == "" or skill_level(p) > 0
+	if id == "base":
+		return true
+	for l in skill_links(id):
+		if skill_level(String(l)) > 0:
+			return true
+	return false
 
 
 func skill_maxed(id: String) -> bool:
@@ -444,7 +504,7 @@ func cost_text(cost: Dictionary) -> String:
 	return "  ".join(parts)
 
 
-## 素材の合計が一番少ないスキルから、買えるだけ買う。
+## 素材の合計が一番少ないスキルから、買えるだけ買う（小さなノードは後回し）。
 func buy_all_skills() -> int:
 	var n := 0
 	while n < 500:
@@ -457,6 +517,8 @@ func buy_all_skills() -> int:
 			var tot := 0.0
 			for m in skill_cost(id):
 				tot += float(skill_cost(id)[m])
+			if String(s["stat"]) != "":
+				tot *= 3.0  # 小さなノードより、大きなノードを先に
 			if tot < best_c:
 				best = id
 				best_c = tot

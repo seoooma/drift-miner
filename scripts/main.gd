@@ -1,9 +1,9 @@
 extends Node2D
 ## ゲームの進行。巨大惑星の生成と保存、砕いたブロックの報酬（クレジット・素材・遺物・宝箱）、
-## 惑星クリアと次の惑星、タップ掘り、自動タップ・自動強化、狙いの中心 (focus) と寄りのカメラを受け持つ。
+## 惑星クリアと次の惑星、自動強化、機体の集まる場所 (focus) と寄りのカメラを受け持つ。
+## タップは攻撃ではなく「移動先の指定」。機体はそこへ移動し、周りを掘り尽くすと自動の探索に戻る。
 
 const VIEW_CELLS := 20.0  # 画面の短い辺に並ぶマスの数（ブロック1つ ≒ 画面幅の1/20）
-const MANUAL_HOLD := 10.0  # タップした場所を狙い続ける秒数
 
 const HudScript := preload("res://scripts/hud.gd")
 const BackdropScript := preload("res://scripts/backdrop.gd")
@@ -22,12 +22,11 @@ var _pop_t: float = 0.0
 var _mat_pop := {}
 var _mat_pop_t: float = 0.0
 var _auto_t: float = 0.0
-var _tap_t: float = 0.0
 var _zoom: float = 0.0
 var focus := Vector2.ZERO  # ツールが狙う中心（ワールド座標）
 var _focus_goal := Vector2.ZERO
 var _focus_t: float = 0.0
-var _manual_t: float = 0.0
+var _manual := false  # プレイヤーが指定した移動先へ向かっている／そこを掘っている
 
 
 func _ready() -> void:
@@ -87,11 +86,12 @@ func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 	tools.reset_for(planet)
 	_zoom = 0.0
 	var top := planet.surface_cell(-PI * 0.5 + randf_range(-0.6, 0.6))
-	focus = planet.cell_center(top) if top >= 0 else planet.position
+	focus = planet.hover_point(top, Planet.CELL) if top >= 0 else planet.position
 	_focus_goal = focus
-	_manual_t = 0.0
+	_manual = false
 	_focus_t = 0.0
 	tools.focus = focus
+	tools.dest = _focus_goal if _manual else Vector2.INF
 	var tr := gs.trait_def()
 	hud.banner("惑星 %d：%s" % [gs.planet, tr["name"]], String(tr["desc"]) if saved.is_empty() else "")
 
@@ -105,14 +105,6 @@ func _process(delta: float) -> void:
 		if _auto_t >= 0.5:
 			_auto_t = 0.0
 			_auto_buy()
-	var taps := gs.skill_level("auto_tap")
-	if taps > 0 and not planet.done:
-		_tap_t += delta
-		if _tap_t >= 1.0 / taps:
-			_tap_t = 0.0
-			var i := planet.random_surface_cell()
-			if i >= 0:
-				tap_at(planet.cell_center(i))
 	_pop_t -= delta
 	if _pop_t <= 0.0 and _pop_acc > 0.0:
 		Fx.popup(fx_layer, _pop_pos, "+" + gs.fmt(_pop_acc), Color(0.85, 1.0, 0.9))
@@ -127,32 +119,29 @@ func _process(delta: float) -> void:
 		_mat_pop.clear()
 
 
-## 狙いの中心を決める。タップした直後はそこを狙い続け、それ以外は
-## 近くで一番「おいしい」マス（鉱石・遺物・浅い所）へ少しずつ移っていく。
+## 機体の集まる場所を決める。移動先が指定されていればそこへ向かい、着いてから
+## 周りを掘り尽くすまで留まる。それ以外は、探索範囲の中で一番「おいしい」マス
+## （鉱石・遺物・浅い所）の前へ移っていく。どちらも外とつながった空きだけを通る。
 func _update_focus(delta: float) -> void:
 	if planet.done:
 		return
-	_manual_t -= delta
+	var gs := GameState
 	_focus_t -= delta
 	if _focus_t <= 0.0:
 		_focus_t = 0.5
-		var near := planet.targets_near(focus, 5)
-		if _manual_t > 0.0 and not near.is_empty():
-			_focus_goal = focus
-		else:
-			_manual_t = 0.0
-			var t := planet.targets_near(focus, 20)
-			if not t.is_empty():
-				_focus_goal = planet.cell_center(int(t[0]))
-			else:
-				var i := planet.raycast(focus, planet.position)
-				if i < 0:
-					i = planet.random_surface_cell()
-				if i >= 0:
-					_focus_goal = planet.cell_center(i)
-	if _manual_t <= 0.0:
-		focus = focus.move_toward(_focus_goal, maxf(18.0, focus.distance_to(_focus_goal) * 1.5) * delta)
+		if _manual and focus.distance_to(_focus_goal) < Planet.CELL and planet.targets_near(focus, 6).is_empty():
+			_manual = false
+		if not _manual:
+			var t := planet.targets_near(focus, gs.scan_radius(), 0.6)
+			var i := int(t[0]) if not t.is_empty() else planet.raycast(focus, planet.position)
+			if i < 0:
+				i = planet.random_surface_cell()
+			if i >= 0:
+				_focus_goal = planet.hover_point(i, Planet.CELL)
+	var sp := 70.0 if _manual else maxf(18.0, focus.distance_to(_focus_goal) * 1.5)
+	focus = focus.move_toward(_focus_goal, sp * gs.move_mult() * delta)
 	tools.focus = focus
+	tools.dest = _focus_goal if _manual else Vector2.INF
 
 
 ## 惑星の一部だけが大きく映るよう、狙いの中心にカメラを寄せる。
@@ -239,20 +228,19 @@ func go_next(trait_id: String) -> void:
 	gs.save()
 
 
-func tap_at(world_pos: Vector2) -> void:
+## タップした場所を機体の移動先にする。岩の中なら、一番近い入れる場所に直す。
+func set_destination(world_pos: Vector2) -> void:
 	if planet.done:
 		return
-	planet.hit_area(world_pos, Planet.CELL * 1.8, GameState.tap_damage())
-	tools.tap_effect(world_pos)
-
-
-## プレイヤーがタップした場所を、しばらく狙いの中心にする。
-func set_focus(world_pos: Vector2) -> void:
-	focus = world_pos
-	_focus_goal = world_pos
-	_manual_t = MANUAL_HOLD
-	_focus_t = 0.0
-	tools.focus = focus
+	_focus_goal = planet.nearest_open(world_pos)
+	# 何もない宇宙を指したときは、その真下の地表へ降りる
+	if planet.targets_near(_focus_goal, 6).is_empty():
+		var i := planet.raycast(_focus_goal, planet.position)
+		if i >= 0:
+			_focus_goal = planet.hover_point(i, Planet.CELL)
+	_manual = true
+	_focus_t = 0.5
+	tools.tap_effect(_focus_goal)
 	tools.rescan()
 
 
@@ -266,9 +254,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		pressed = true
 		pos = event.position
 	if pressed and hud.planet_area().has_point(pos) and not hud.any_panel():
-		var wp := get_canvas_transform().affine_inverse() * pos
-		set_focus(wp)
-		tap_at(wp)
+		set_destination(get_canvas_transform().affine_inverse() * pos)
 
 
 func _notification(what: int) -> void:
