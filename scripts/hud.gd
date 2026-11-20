@@ -626,21 +626,31 @@ func _draw_overlay() -> void:
 	_draw_minimap(p)
 
 
-## 惑星エリアの右上に、四角い枠の小さな地図。惑星は平らな円、いまの場所は小さな点。
+## 惑星エリアの右上に、四角い枠の小さな地図。惑星の地形（掘った跡も映る）と、
+## いま見ている範囲の細い枠、いまの場所の小さな点を描く。
 func _draw_minimap(p: Planet) -> void:
+	var tex: Texture2D = p.get("_tex")
 	var area := planet_area()
-	var m := 76.0
+	var m := 84.0
 	var box := Rect2(area.end.x - m - 10.0, area.position.y + 8.0, m, m)
 	var c := box.get_center()
 	_overlay.draw_rect(box, Neon.BG)
-	_overlay.draw_rect(box.grow(-0.5), Neon.MUTED, false, 1.0)
+	var inner := box.grow(-4.0)
+	if tex != null:
+		# 地形は暗い単色なので、少し明るくして黒の上でも形が読めるようにする
+		_overlay.draw_texture_rect(tex, inner, false, Color(2.2, 2.2, 2.2))
 	var world := p.size * Planet.CELL
-	var k := (m - 12.0) / world
-	var pr := maxf(2.0, p.outer * k)
-	_overlay.draw_circle(c, pr, p.fill_color.lightened(0.25))
+	var k := inner.size.x / world
+	var cam: Camera2D = main.camera
+	var view := area.size / cam.zoom.x
+	var vc: Vector2 = cam.position + (area.get_center() - _size() * 0.5) / cam.zoom.x
+	var vr := Rect2(c + (vc - p.position - view * 0.5) * k, view * k)
+	if view.x > 0.0 and view.y > 0.0 and vr.intersects(inner):
+		_overlay.draw_rect(vr.intersection(inner), Color(Neon.LINE, 0.85), false, 1.0)
 	var dot: Vector2 = c + (main.focus - p.position) * k
-	_overlay.draw_circle(dot, 5.0, Neon.glow(Neon.RED))
-	_overlay.draw_circle(dot, 2.5, Neon.RED)
+	_overlay.draw_circle(dot, 4.5, Neon.glow(Neon.RED))
+	_overlay.draw_circle(dot, 2.0, Neon.RED)
+	_overlay.draw_rect(box.grow(-0.5), Neon.MUTED, false, 1.0)
 
 
 # ---------------------------------------------------------------- スキルツリー
