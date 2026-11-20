@@ -7,7 +7,8 @@ signal picked(id: String)
 
 const NOTABLE_R := 19.0
 const MINOR_R := 10.0
-const LIMIT := 980.0
+const KEY_R := 22.0
+const LIMIT := 1100.0
 
 var sel: String = ""
 var offset := Vector2.ZERO  # 画面の中央に来るマップ座標
@@ -60,7 +61,14 @@ func _to_screen(p: Vector2) -> Vector2:
 
 
 func _node_r(sk: Dictionary) -> float:
+	if bool(sk.get("key", false)):
+		return KEY_R
 	return (MINOR_R if String(sk["stat"]) != "" else NOTABLE_R) * (1.25 if sk["id"] == "base" else 1.0)
+
+
+## ひし形（要石の形）
+func _diamond(c: Vector2, r: float) -> PackedVector2Array:
+	return PackedVector2Array([c + Vector2(0, -r), c + Vector2(r, 0), c + Vector2(0, r), c + Vector2(-r, 0), c + Vector2(0, -r)])
 
 
 func _pan(d: Vector2) -> void:
@@ -152,6 +160,23 @@ func _draw() -> void:
 	while gy < size.y:
 		draw_rect(Rect2(0, floorf(gy), size.x, 1), gc)
 		gy += step
+	# 段階の境目：細い点線の円。まだ解放していない段階には、解放の条件を添える
+	for k in gs.TIER_R.size():
+		var rr: float = gs.TIER_R[k] * zoom
+		var need: int = gs.TIER_PLANET[k + 1]
+		var locked := gs.best_planet < need
+		var col := Color(Neon.RED if locked else Neon.MUTED, 0.35 if locked else 0.18)
+		var segs := 96
+		for i in segs:
+			if i % 2 == 0:
+				draw_arc(c0, rr, TAU * i / segs, TAU * (i + 1) / segs, 3, col, 1.0)
+		if locked:
+			var lt := "惑星 %d で解放" % need
+			var lfs := int(12 * clampf(zoom, 0.8, 1.3))
+			var lw := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs).x
+			for ang in [PI * 0.5, -PI * 0.5]:
+				var lp := c0 + Vector2.from_angle(ang) * (rr + 14.0) + Vector2(-lw * 0.5, 4.0)
+				draw_string(font, lp, lt, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs, Color(Neon.RED, 0.7))
 	# 系統の名前
 	for br in gs.BRANCHES:
 		var d: Dictionary = gs.BRANCHES[br]
@@ -187,9 +212,12 @@ func _draw() -> void:
 			continue
 		var lv := gs.skill_level(id)
 		var mx := int(sk["max"])
-		var open := gs.skill_open(id)
+		var open := gs.skill_open(id) and gs.tier_ok(id)
 		var bc := _branch_col(sk)
 		var rect := Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0)
+		if bool(sk.get("key", false)):
+			_draw_key(sk, p, r, lv > 0, open, bc, pulse)
+			continue
 		draw_rect(rect, Neon.BG)
 		var ring := Color(Neon.MUTED, 0.6)
 		var rw := 1.0
@@ -228,3 +256,38 @@ func _draw() -> void:
 				var lfs := int(10 * clampf(zoom, 0.8, 1.3))
 				var lw := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs).x
 				draw_string(font, Vector2(rect.end.x - lw - 2.0, rect.position.y - 3.0), lt, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs, Color(Neon.CYAN, alpha))
+
+
+
+## 要石：ひし形の枠。付けているものは系統の色で塗り、名前の上に「要石」と添える
+func _draw_key(sk: Dictionary, p: Vector2, r: float, on: bool, open: bool, bc: Color, pulse: float) -> void:
+	var gs := GameState
+	var font := Neon.font()
+	var id := String(sk["id"])
+	var outer := _diamond(p, r)
+	draw_colored_polygon(outer, Neon.BG)
+	var ring := Color(Neon.MUTED, 0.6)
+	if on:
+		ring = bc
+	elif gs.can_buy_skill(id):
+		ring = Neon.CYAN.lerp(Color.WHITE, pulse * 0.4)
+	elif open:
+		ring = Color(Neon.LINE, 0.8)
+	draw_polyline(outer, Neon.glow(ring), 6.0)
+	draw_polyline(outer, ring, 2.0)
+	draw_polyline(_diamond(p, r * 0.7), Color(ring, 0.6), 1.0)
+	if on:
+		draw_colored_polygon(_diamond(p, r * 0.45), Color(bc, 0.85))
+	if id == sel:
+		Neon.brackets(self, Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0).grow(6.0), Neon.YELLOW, r * 0.7, 2.0)
+	var alpha := 1.0 if open or on else 0.45
+	var fs := int(11 * clampf(zoom, 0.8, 1.3))
+	var name := String(sk["name"])
+	var w := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tp := p + Vector2(-w * 0.5, r + fs + 4.0)
+	draw_string(font, tp + Vector2(1, 1), name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Neon.SHADOW)
+	draw_string(font, tp, name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(Neon.TEXT, alpha))
+	var tag := "要石"
+	var tfs := int(10 * clampf(zoom, 0.8, 1.3))
+	var tw := font.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, tfs).x
+	draw_string(font, p + Vector2(-tw * 0.5, -r - 5.0), tag, HORIZONTAL_ALIGNMENT_LEFT, -1, tfs, Color(bc, alpha))

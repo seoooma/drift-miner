@@ -2,6 +2,7 @@ extends Node
 ## ゲームの状態（Autoload）。
 ## 惑星（ラン）：クレジット、ツールのレベル、見つけた遺物、掘った跡。惑星を割ると次の惑星でリセット。
 ## 永続：素材（鉄・銅・金・結晶）とスキルツリー。素材はブロックを砕くと手に入り、スキルの強化に使う。
+## 遺物は惑星を割るときに1つだけ次の惑星へ持ち越せる（効果は半分）。
 
 signal changed
 
@@ -72,7 +73,7 @@ const RELICS := [
 ## links のどれか（逆向きも含む）が Lv1 以上なら習得できる。pos はマップ上の座標。
 ## stat があるのは小さなノード（同じ stat の合計で効く）。cost は Lv0 のときの素材。
 const SKILLS := [
-	{"id": "base", "name": "採掘基地", "desc": "すべての始まり", "max": 1, "cost": {}, "growth": 1.0, "links": [], "pos": Vector2(0, 0), "branch": "", "stat": "", "amt": 0.0},
+	{"id": "base", "name": "母艦", "desc": "すべての始まり。機体はこの船から出て働く", "max": 1, "cost": {}, "growth": 1.0, "links": [], "pos": Vector2(0, 0), "branch": "", "stat": "", "amt": 0.0},
 	{"id": "a1", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"iron": 30}, "growth": 1.6, "links": ["base"], "pos": Vector2(0, -118), "branch": "A", "stat": "pow", "amt": 0.15},
 	{"id": "drone_pow", "name": "ドローン出力", "desc": "採掘ドローンの威力 +60%", "max": 15, "cost": {"iron": 48}, "growth": 1.45, "links": ["a1"], "pos": Vector2(0, -236), "branch": "A", "stat": "", "amt": 0.0},
 	{"id": "drone_count", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": {"copper": 72}, "growth": 2.2, "links": ["drone_pow"], "pos": Vector2(-68, -347), "branch": "A", "stat": "", "amt": 0.0},
@@ -119,8 +120,18 @@ const SKILLS := [
 	{"id": "x_ea", "name": "姿勢制御", "desc": "機体の移動速度 +25%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["e1", "drone_count"], "pos": Vector2(-229, -315), "branch": "X", "stat": "move", "amt": 0.25},
 	{"id": "y_ab", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["a4", "b3"], "pos": Vector2(388, -535), "branch": "X", "stat": "pow", "amt": 0.15},
 	{"id": "y_cd", "name": "選鉱", "desc": "素材の入手量 +5%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["interest", "core_bonus"], "pos": Vector2(0, 661), "branch": "X", "stat": "mat", "amt": 0.05},
+	# 要石：各系統の端にある、代償つきの大きなノード。同時に付けられるのは1つだけ（外すと素材は全額戻る）
+	{"id": "k_drone", "name": "共鳴群", "desc": "採掘ドローンの威力 ×(機数×2)。ほかのツールの威力 ×0.5", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["overdrive"], "pos": Vector2(-12, -850), "branch": "A", "stat": "", "amt": 0.0, "key": true},
+	{"id": "k_heavy", "name": "重機運用", "desc": "ドローン以外のツールの威力 ×5。採掘ドローンの威力 ×0.2", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["mastery"], "pos": Vector2(910, -300), "branch": "B", "stat": "", "amt": 0.0, "key": true},
+	{"id": "k_loan", "name": "先行投資", "desc": "惑星に着いたときのクレジット ×50。獲得クレジット ×0.6", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["interest", "y_cd"], "pos": Vector2(300, 680), "branch": "C", "stat": "", "amt": 0.0, "key": true},
+	{"id": "k_relic", "name": "遺物狩り", "desc": "遺物と宝箱が3倍出る（次に作られる惑星から）。素材の入手量 ×0.7", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["core_bonus"], "pos": Vector2(-470, 630), "branch": "D", "stat": "", "amt": 0.0, "key": true},
+	{"id": "k_drift", "name": "無人航行", "desc": "タップで移動先を決められなくなる。自動探索の範囲 ×2・機体の移動速度 ×2", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["navigator"], "pos": Vector2(-700, -228), "branch": "E", "stat": "", "amt": 0.0, "key": true},
 
 ]
+## スキルの段階。マップの中心からの距離で内・中・外に分かれ、最高到達の惑星で解放される。
+const TIER_R := [380.0, 620.0]
+const TIER_PLANET := [1, 3, 5]
+
 ## 系統の名前と色（マップの見出し）
 const BRANCHES := {
 	"A": {"name": "採掘力", "color": Color(0.35, 0.9, 1.0), "angle": -90.0},
@@ -142,6 +153,8 @@ var planet_time: float = 0.0
 var saved_hp := PackedFloat32Array()
 var income_rate: float = 0.0
 var next_traits: Array = []
+var carried_relic: String = ""  # 前の惑星から持ち越した遺物（効果は半分）
+var compare_time: float = 0.0  # 惑星クリアの画面で比べる、前の惑星の所要時間
 
 # --- 永続 ---
 var mats := {}
@@ -149,6 +162,8 @@ var skills := {}
 var best_planet: int = 1
 var offline_gain: float = 0.0
 var offline_secs: float = 0.0
+var prev_time: float = 0.0  # 前に割った惑星の所要時間（秒）
+var respec_ready: bool = false  # 惑星を割るたびに1回、スキルを全額返却で振り直せる
 
 ## main.gd が保存の直前に掘った跡を渡すための関数
 var hp_provider: Callable
@@ -211,16 +226,17 @@ static func fmt(x: float) -> String:
 # ---------------------------------------------------------------- 惑星
 
 
-func start_planet(p: int, t: String) -> void:
+func start_planet(p: int, t: String, carry: String = "") -> void:
 	planet = p
 	trait_id = t
 	run_seed = randi()
-	credits = 20.0 * pow(4.0, skill_level("start_cr")) * pow(planet_mult(), 0.5)
+	credits = 20.0 * pow(4.0, skill_level("start_cr")) * pow(planet_mult(), 0.5) * (50.0 if has_key("k_loan") else 1.0)
 	tool_levels = {}
 	for td in TOOLS:
 		tool_levels[td["id"]] = 0
 	tool_levels["drone"] = 1
 	relics = []
+	carried_relic = carry
 	mats_this_planet = {}
 	for m in MATS:
 		mats_this_planet[m] = 0.0
@@ -254,7 +270,7 @@ func cell_value(depth: float) -> float:
 
 
 func cr_mult() -> float:
-	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * pow(1.5, relic_count("cr"))
+	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * pow(1.5, relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0)
 
 
 func earn(amount: float, track: bool = true) -> void:
@@ -264,7 +280,7 @@ func earn(amount: float, track: bool = true) -> void:
 
 
 func mat_mult() -> float:
-	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * pow(1.3, relic_count("mat"))
+	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * pow(1.3, relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0)
 
 
 func add_mat(m: String, amount: float) -> float:
@@ -276,8 +292,9 @@ func add_mat(m: String, amount: float) -> float:
 	return a
 
 
-func relic_count(id: String) -> int:
-	return relics.count(id)
+## 遺物の数。持ち越した遺物は半分（0.5個）として数える。
+func relic_count(id: String) -> float:
+	return float(relics.count(id)) + (0.5 if carried_relic == id else 0.0)
 
 
 func add_random_relic() -> Dictionary:
@@ -288,7 +305,7 @@ func add_random_relic() -> Dictionary:
 
 
 func relic_luck() -> float:
-	return 1.0 + 0.4 * skill_level("relic_luck")
+	return (1.0 + 0.4 * skill_level("relic_luck")) * (3.0 if has_key("k_relic") else 1.0)
 
 
 ## 惑星を割ったときの処理。追加の素材を返す。
@@ -301,6 +318,9 @@ func finish_planet() -> Dictionary:
 			mats[m] = float(mats[m]) + a
 			extra[m] = a
 	best_planet = maxi(best_planet, planet + 1)
+	compare_time = prev_time
+	prev_time = planet_time
+	respec_ready = true
 	return extra
 
 
@@ -348,10 +368,21 @@ func tool_dps_at(id: String, lv: int) -> float:
 	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult()
 	if id == "drone":
 		d *= (1.0 + 0.6 * skill_level("drone_pow") + stat("dpow")) * pow(2.0, relic_count("tap"))
+		if has_key("k_drone"):
+			d *= 2.0 * drone_count()
+		if has_key("k_heavy"):
+			d *= 0.2
+	else:
+		if has_key("k_drone"):
+			d *= 0.5
+		if has_key("k_heavy"):
+			d *= 5.0
 	return d
 
 
 func tool_dps(id: String) -> float:
+	if not tool_unlocked(id):
+		return 0.0
 	return tool_dps_at(id, tool_level(id))
 
 
@@ -402,16 +433,16 @@ func milestone_frac(id: String) -> float:
 
 ## 機体の移動速度の倍率
 func move_mult() -> float:
-	return 1.0 + 0.4 * skill_level("thrust") + stat("move")
+	return (1.0 + 0.4 * skill_level("thrust") + stat("move")) * (2.0 if has_key("k_drift") else 1.0)
 
 
 ## 自動探索で鉄・銅などの鉱脈を探しに行く範囲（マス）
 func scan_radius() -> int:
-	return 16 + 8 * skill_level("auto_scan")
+	return (16 + 8 * skill_level("auto_scan")) * (2 if has_key("k_drift") else 1)
 
 
 func drone_count() -> int:
-	return 1 + skill_level("drone_count") + 2 * relic_count("drone")
+	return 1 + skill_level("drone_count") + int(2.0 * relic_count("drone"))
 
 
 # ---------------------------------------------------------------- スキルツリー
@@ -481,8 +512,86 @@ func can_afford_mats(cost: Dictionary) -> bool:
 	return true
 
 
+func is_key(id: String) -> bool:
+	return bool(skill_def(id).get("key", false))
+
+
+func has_key(id: String) -> bool:
+	return skill_level(id) > 0
+
+
+## いま付けている要石（なければ ""）
+func active_key() -> String:
+	for s in SKILLS:
+		if bool(s.get("key", false)) and skill_level(String(s["id"])) > 0:
+			return String(s["id"])
+	return ""
+
+
+## スキルの段階（0=内, 1=中, 2=外）。要石はいつも外。
+func skill_tier(id: String) -> int:
+	if is_key(id):
+		return 2
+	var r := (skill_def(id)["pos"] as Vector2).length()
+	if r < TIER_R[0]:
+		return 0
+	return 1 if r < TIER_R[1] else 2
+
+
+func tier_planet(id: String) -> int:
+	return TIER_PLANET[skill_tier(id)]
+
+
+func tier_ok(id: String) -> bool:
+	return best_planet >= tier_planet(id)
+
+
 func can_buy_skill(id: String) -> bool:
-	return skill_open(id) and not skill_maxed(id) and can_afford_mats(skill_cost(id))
+	if is_key(id) and active_key() != "":
+		return false
+	return skill_open(id) and tier_ok(id) and not skill_maxed(id) and can_afford_mats(skill_cost(id))
+
+
+## Lv0 から今のレベルまでに使った素材の合計
+func skill_spent(id: String) -> Dictionary:
+	var s := skill_def(id)
+	var out := {}
+	for k in skill_level(id):
+		var g := pow(float(s["growth"]), k)
+		for m in s["cost"]:
+			out[m] = float(out.get(m, 0.0)) + ceilf(float(s["cost"][m]) * g)
+	return out
+
+
+func _refund(id: String) -> void:
+	var back := skill_spent(id)
+	for m in back:
+		mats[m] = float(mats.get(m, 0.0)) + float(back[m])
+	skills[id] = 0
+
+
+## 要石を外す。素材は全額戻る。
+func remove_key(id: String) -> bool:
+	if not is_key(id) or skill_level(id) <= 0:
+		return false
+	_refund(id)
+	save()
+	changed.emit()
+	return true
+
+
+## スキルを全部外して素材を全額戻す（惑星を割るたびに1回）
+func respec() -> bool:
+	if not respec_ready:
+		return false
+	for s in SKILLS:
+		var id := String(s["id"])
+		if id != "base" and skill_level(id) > 0:
+			_refund(id)
+	respec_ready = false
+	save()
+	changed.emit()
+	return true
 
 
 func buy_skill(id: String) -> bool:
@@ -512,7 +621,7 @@ func buy_all_skills() -> int:
 		var best_c := INF
 		for s in SKILLS:
 			var id := String(s["id"])
-			if not can_buy_skill(id):
+			if is_key(id) or not can_buy_skill(id):
 				continue
 			var tot := 0.0
 			for m in skill_cost(id):
@@ -546,6 +655,9 @@ func save() -> void:
 	cfg.set_value("run", "time", planet_time)
 	cfg.set_value("run", "hp", saved_hp)
 	cfg.set_value("run", "income_rate", income_rate)
+	cfg.set_value("run", "carried_relic", carried_relic)
+	cfg.set_value("meta", "prev_time", prev_time)
+	cfg.set_value("meta", "respec_ready", respec_ready)
 	cfg.set_value("meta", "mats", mats)
 	cfg.set_value("meta", "skills", skills)
 	cfg.set_value("meta", "best_planet", best_planet)
@@ -571,6 +683,9 @@ func _load() -> void:
 	planet_time = float(cfg.get_value("run", "time", 0.0))
 	saved_hp = cfg.get_value("run", "hp", PackedFloat32Array())
 	income_rate = float(cfg.get_value("run", "income_rate", 0.0))
+	carried_relic = String(cfg.get_value("run", "carried_relic", ""))
+	prev_time = float(cfg.get_value("meta", "prev_time", 0.0))
+	respec_ready = bool(cfg.get_value("meta", "respec_ready", false))
 	var mm: Dictionary = cfg.get_value("meta", "mats", {})
 	for k in mm:
 		mats[k] = float(mm[k])

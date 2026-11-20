@@ -1,6 +1,7 @@
 class_name Tools
 extends Node2D
-## 採掘ツールの動きと描画。どのツールも機体の集まる場所 (focus) の近くで、
+## 採掘ツールの動きと描画。主人公は母艦で、機体の集まる場所 (focus) の少し上空に浮かぶ。
+## 機体は母艦から出て、focus の近くで
 ## 外に面した価値の高いマスを自動で選んで削る。回転や周回はしない。
 ## 同じマスを取り合わないよう、狙いは機体ごとに分担する（範囲攻撃のツールは
 ## 互いに離れた場所、ドローンとスウォームはまだ誰も狙っていないマス）。
@@ -11,6 +12,7 @@ var planet: Planet = null
 var fx_layer: Node2D = null
 var focus := Vector2.ZERO  # main.gd が毎フレーム入れる
 var dest := Vector2.INF  # プレイヤーが指定した移動先（なければ INF）
+var auto_dest := Vector2.INF  # 自動で向かっている先（着いていれば INF）
 
 var _t: float = 0.0
 var _targets: Array = []  # 狙う順に並んだマス番号
@@ -34,6 +36,9 @@ var _bots: Array = []  # {"pos", "target"}
 var _taps: Array = []  # {"pos", "t"}
 var _glow: Node2D  # 加算合成で描く光（ビーム・噴射・照準）
 var _carrier_pos := Vector2.INF
+var _trail: Array = []  # 母艦の航跡（古い順の位置）
+var _trail_t: float = 0.0
+var _carrier_flash: float = 0.0
 
 
 func _ready() -> void:
@@ -62,6 +67,18 @@ func reset_for(p: Planet) -> void:
 	_sat_pos = Vector2.INF
 	_laser_target = -1
 	_claimed.clear()
+	_carrier_pos = Vector2.INF
+	_trail.clear()
+
+
+## 母艦の位置（まだ出ていなければ INF）。回収の演出が毎フレーム呼ぶ。
+func carrier_pos() -> Vector2:
+	return _carrier_pos
+
+
+## 回収した粒が母艦に着いたとき、母艦を一瞬光らせる
+func carrier_pulse() -> void:
+	_carrier_flash = minf(1.0, _carrier_flash + 0.35)
 
 
 ## 狙いの中心が変わったらすぐ選び直す（タップしたとき）
@@ -178,7 +195,7 @@ func _process(delta: float) -> void:
 		_sat_pos = sat_home if _sat_pos == Vector2.INF else _sat_pos.lerp(sat_home, clampf(delta * 2.0, 0.0, 1.0))
 		_laser_t -= delta
 		if not planet.is_alive(_laser_target) or _laser_t <= 0.0:
-			_laser_t = 1.2
+			_laser_t = 3.0
 			_laser_target = _pick_free([drill_c], Planet.CELL * 4.0)
 			if _laser_target >= 0:
 				Audio.play("laser")
@@ -190,14 +207,14 @@ func _process(delta: float) -> void:
 	var drone_dps := gs.tool_dps("drone")
 	var n := gs.drone_count() if drone_dps > 0.0 else 0
 	while _drones.size() < n:
-		_drones.append({"pos": focus, "target": -1})
+		_drones.append({"pos": _carrier_pos if _carrier_pos != Vector2.INF else focus, "target": -1})
 	while _drones.size() > n:
 		_drones.pop_back()
 	var busy := [drill_c, _laser_hit]
 	for k in _drones.size():
 		var d: Dictionary = _drones[k]
 		var tgt := int(d["target"])
-		if not planet.is_alive(tgt) or planet.cell_center(tgt).distance_to(focus) > Planet.CELL * 12.0:
+		if not planet.is_alive(tgt) or planet.cell_center(tgt).distance_to(focus) > Planet.CELL * 18.0:
 			_claimed.erase(tgt)
 			tgt = _pick_free(busy, Planet.CELL * 2.0)
 			d["target"] = tgt
@@ -247,7 +264,7 @@ func _process(delta: float) -> void:
 	var sw := gs.tool_dps("swarm")
 	if sw > 0.0:
 		while _bots.size() < 28:
-			_bots.append({"pos": focus, "target": -1})
+			_bots.append({"pos": _carrier_pos if _carrier_pos != Vector2.INF else focus, "target": -1})
 		for b in _bots:
 			var tgt := int(b["target"])
 			if not planet.is_alive(tgt):
@@ -261,10 +278,17 @@ func _process(delta: float) -> void:
 			if (b["pos"] as Vector2).distance_to(tp) < 4.0:
 				planet.hit(tgt, sw / _bots.size() * delta)
 
-	# 母艦：機体の集まる場所の少し上空に浮かぶ
+	# 母艦（主人公）：機体の集まる場所の少し上空に浮かび、移動するときは先頭を行く
 	var up := (focus - planet.position).normalized() if focus.distance_to(planet.position) > 1.0 else Vector2.UP
-	var ch := focus + up * 46.0 + up.orthogonal() * sin(_t * 0.4) * 10.0
-	_carrier_pos = ch if _carrier_pos == Vector2.INF else _carrier_pos.lerp(ch, clampf(delta * 1.5, 0.0, 1.0))
+	var ch := focus + up * 40.0 + up.orthogonal() * sin(_t * 0.4) * 6.0
+	_carrier_pos = ch if _carrier_pos == Vector2.INF else _carrier_pos.lerp(ch, clampf(delta * 3.0, 0.0, 1.0))
+	_carrier_flash = maxf(0.0, _carrier_flash - delta * 3.0)
+	_trail_t -= delta
+	if _trail_t <= 0.0:
+		_trail_t = 0.08
+		_trail.append(_carrier_pos)
+		if _trail.size() > 16:
+			_trail.pop_front()
 	for tp in _taps.duplicate():
 		tp["t"] = float(tp["t"]) + delta * 1.5
 		if float(tp["t"]) >= 1.0:
@@ -275,6 +299,17 @@ func _process(delta: float) -> void:
 
 func tap_effect(p: Vector2) -> void:
 	_taps.append({"pos": p, "t": 0.0})
+
+
+## 母艦の機首の向き。航跡から進む向きを求め、止まっているときは惑星の方を向く。
+func _carrier_heading() -> float:
+	var c := planet.position
+	var down := (c - _carrier_pos).angle()
+	if _trail.size() >= 4:
+		var v: Vector2 = _carrier_pos - (_trail[_trail.size() - 4] as Vector2)
+		if v.length() > 4.0:
+			return lerp_angle(down, v.angle(), clampf((v.length() - 4.0) / 12.0, 0.0, 1.0))
+	return down
 
 
 ## 線画の機体。下に太く薄い線（にじみ）、上に細い線。size はワールド単位の全長。
@@ -310,10 +345,9 @@ func _draw() -> void:
 	var gs := GameState
 	var c := planet.position
 
-	# 母艦
+	# 母艦（主人公）。動いているときは進む向きに機首を向ける
 	if _carrier_pos != Vector2.INF and not planet.done:
-		var up := (_carrier_pos - c).normalized()
-		_ship("carrier", _carrier_pos, (-up).angle(), 12.0, Neon.LINE)
+		_ship("carrier", _carrier_pos, _carrier_heading(), 13.0, Neon.LINE.lerp(Neon.CYAN, _carrier_flash * 0.7), 1.8)
 
 	# ドローン
 	for d in _drones:
@@ -379,10 +413,32 @@ func _draw_glow() -> void:
 		Neon.brackets(_glow, Rect2(dest - Vector2(r, r), Vector2(r, r) * 2.0), Neon.glow(pc), r * 0.8, Fx.px(5.0))
 		_glow.draw_rect(Rect2(dest - Vector2(hair, hair), Vector2(hair, hair) * 2.0), pc)
 
-	# 母艦のエンジン
+	# 母艦の航跡（細く薄くなっていく線）とエンジン
 	if _carrier_pos != Vector2.INF and not planet.done:
-		var up := (_carrier_pos - c).normalized()
-		_hit_dot(_carrier_pos + up * 6.0, Neon.CYAN, 1.0 + 0.4 * sin(_t * 20.0))
+		for k in range(1, _trail.size()):
+			var a := float(k) / _trail.size()
+			_glow.draw_line(_trail[k - 1], _trail[k], Color(Neon.CYAN, 0.35 * a), Fx.px(1.0 + a))
+		var back := -Vector2.from_angle(_carrier_heading())
+		_hit_dot(_carrier_pos + back * 5.5, Neon.CYAN, 1.2 + 0.4 * sin(_t * 20.0))
+		# 母艦から行き先の方へ、短い破線（4マス分）
+		var goal := dest if dest != Vector2.INF else auto_dest
+		if goal != Vector2.INF:
+			var dir := (goal - _carrier_pos)
+			var len := minf(dir.length() - Planet.CELL, Planet.CELL * 4.0)
+			var dc := Neon.LIME if dest != Vector2.INF else Neon.CYAN
+			var dd := dir.normalized()
+			var step := Planet.CELL * 0.5
+			var off := fposmod(_t * 12.0, step * 2.0)
+			var d0 := Planet.CELL * 1.2 + off
+			while d0 < len:
+				_glow.draw_line(_carrier_pos + dd * d0, _carrier_pos + dd * minf(d0 + step, len), Color(dc, 0.6), Fx.px(1.2))
+				d0 += step * 2.0
+
+	# 自動で向かっている先の目印（シアンの角かっこ。手動の緑より控えめ）
+	if auto_dest != Vector2.INF and dest == Vector2.INF:
+		var ac := Color(Neon.CYAN, 0.45 + 0.15 * sin(_t * 2.5))
+		var ar := 5.0
+		Neon.brackets(_glow, Rect2(auto_dest - Vector2(ar, ar), Vector2(ar, ar) * 2.0), ac, ar * 0.6, Fx.px(1.5))
 
 	# ドローンのビーム
 	var dc := Neon.CYAN
