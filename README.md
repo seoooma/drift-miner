@@ -1,6 +1,6 @@
 # Drift Miner
 
-Godot 4 で作る、放置型の巨大惑星採掘ゲーム（ローグライク要素つき）。見た目は黒い宇宙に細いネオンの線で描く HUD 風。効果音には Kenney の CC0 素材、BGM には CC0 の楽曲を使っています（[CREDITS.md](CREDITS.md)）。
+Godot 4 で作る、放置型の巨大惑星採掘ゲーム（ローグライク要素つき）。見た目は黒い宇宙に細いネオンの線で描く HUD 風。効果音・環境音・光の演出には Kenney の CC0 素材、BGM には CC0 の楽曲を使っています（[CREDITS.md](CREDITS.md)）。
 
 Web 版：https://seoooma.github.io/drift-miner/ （`main` にマージされるたびに GitHub Actions が書き出して公開。スマホの縦持ち・横持ち、PC に対応）
 

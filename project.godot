@@ -11,6 +11,7 @@ config/features=PackedStringArray("4.3")
 
 GameState="*res://scripts/game_state.gd"
 Audio="*res://scripts/audio.gd"
+ScreenFx="*res://scripts/screen_fx.gd"
 
 [display]
 

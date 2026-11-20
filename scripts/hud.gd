@@ -670,6 +670,7 @@ var _after_tree := Callable()
 
 
 func _close() -> void:
+	Audio.play("close")
 	if _tree_panel.visible and _after_tree.is_valid():
 		var cb := _after_tree
 		_after_tree = Callable()
