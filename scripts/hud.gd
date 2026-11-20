@@ -26,7 +26,9 @@ var _backdrops: Array = []
 var _tree_panel: PanelContainer
 var _tree_box: VBoxContainer
 var _tree_sel: String = "drone_pow"
-var _tree_scroll_y: float = 0.0
+var _map: SkillMap = null
+var _map_off := Vector2(0, -120)
+var _map_zoom: float = 0.8
 var _msg_panel: PanelContainer
 var _msg_box: VBoxContainer
 var _top_h: float = 112.0
@@ -345,8 +347,8 @@ func _update_tools() -> void:
 		if not gs.tool_unlocked(id):
 			(r["name"] as Label).text = String(td["name"])
 			(r["dps"] as Label).text = ""
-			(r["sub"] as Label).text = "スキルツリーで解放（%s）" % gs.cost_text(gs.skill_cost(id))
-			btn.text = "未解放\nツリーへ"
+			(r["sub"] as Label).text = "スキルマップで解放（%s）" % gs.cost_text(gs.skill_cost(id))
+			btn.text = "未解放\nマップへ"
 			btn.disabled = false
 			(r["row"] as PanelContainer).modulate.a = 0.5
 			continue
@@ -478,7 +480,9 @@ func _draw_minimap(p: Planet) -> void:
 
 func _open_tree() -> void:
 	get_tree().paused = true
-	_tree_scroll_y = 0.0
+	var sk := GameState.skill_def(_tree_sel)
+	if not sk.is_empty():
+		_map_off = (sk["pos"] as Vector2) * 0.8
 	_build_tree()
 	_tree_panel.visible = true
 
@@ -496,11 +500,17 @@ func _close() -> void:
 	get_tree().paused = false
 
 
+func _keep_map() -> void:
+	if is_instance_valid(_map):
+		_map_off = _map.offset
+		_map_zoom = _map.zoom
+
+
 func _build_tree() -> void:
-	var keep_scroll := _tree_scroll_y
+	_keep_map()
 	_clear(_tree_box)
 	var gs := GameState
-	_title(_tree_box, "スキルツリー", 22)
+	_title(_tree_box, "スキルマップ", 22)
 	var mats := RichTextLabel.new()
 	mats.bbcode_enabled = true
 	mats.fit_content = true
@@ -515,83 +525,33 @@ func _build_tree() -> void:
 
 	var s := _size()
 	var wide := _tree_wide()
-	var tree_w := (_tree_w() - 24.0) * 0.6 if wide else _panel_w() - 24.0
+	var tree_w := (_tree_w() - 24.0) * 0.64 if wide else _panel_w() - 24.0
 	var side_w := (_tree_w() - 24.0) - tree_w - 10.0 if wide else _panel_w() - 24.0
 	var body: BoxContainer = HBoxContainer.new() if wide else VBoxContainer.new()
 	body.add_theme_constant_override("separation", 10)
 	_tree_box.add_child(body)
-	var cols := 5
-	var inner := tree_w - 12.0
-	var cw := inner / cols
-	var nw := cw - 8.0
-	var nh := 58.0
-	var rh := nh + 22.0
-	var rows := 0
-	for sk in gs.SKILLS:
-		rows = maxi(rows, (sk["pos"] as Vector2i).y + 1)
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.custom_minimum_size = Vector2(tree_w, clampf(s.y - 150.0, 200.0, 620.0) if wide else clampf(s.y - 380.0, 180.0, 520.0))
-	body.add_child(scroll)
+	var map := SkillMap.new()
+	map.custom_minimum_size = Vector2(tree_w, clampf(s.y - 150.0, 220.0, 680.0) if wide else clampf(s.y - 390.0, 200.0, 620.0))
+	map.offset = _map_off
+	map.zoom = _map_zoom
+	map.sel = _tree_sel
+	map.picked.connect(func(id: String):
+		_map_off = map.offset
+		_map_zoom = map.zoom
+		_tree_sel = id
+		_build_tree.call_deferred())
+	body.add_child(map)
+	_map = map
 	var side := VBoxContainer.new()
 	side.add_theme_constant_override("separation", 8)
 	body.add_child(side)
-	var canvas := Control.new()
-	canvas.custom_minimum_size = Vector2(inner, rows * rh + 40.0)
-	scroll.add_child(canvas)
-	var pos_of := func(sk: Dictionary) -> Vector2:
-		var p: Vector2i = sk["pos"]
-		return Vector2(p.x * cw + 4.0, 8.0 + p.y * rh + (24.0 if p.y >= 1 else 0.0))
-	# 系統の見出し
-	for k in cols:
-		var hl := Label.new()
-		hl.text = gs.BRANCHES[k]
-		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hl.add_theme_font_size_override("font_size", 12)
-		hl.modulate = Color(0.6, 0.85, 1.0)
-		hl.position = Vector2(k * cw, 8.0 + rh + 4.0)
-		hl.size = Vector2(cw, 16)
-		canvas.add_child(hl)
-	# 枝（親子の線）
-	canvas.draw.connect(func():
-		for sk in gs.SKILLS:
-			var par := String(sk["parent"])
-			if par == "":
-				continue
-			var a: Vector2 = pos_of.call(gs.skill_def(par)) + Vector2(nw * 0.5, nh)
-			var b: Vector2 = pos_of.call(sk) + Vector2(nw * 0.5, 0)
-			var lit := gs.skill_level(String(sk["id"])) > 0
-			var col := Color(0.45, 0.95, 0.6, 0.9) if lit else (Color(0.6, 0.75, 0.9, 0.5) if gs.skill_open(String(sk["id"])) else Color(0.4, 0.4, 0.45, 0.35))
-			if absf(a.x - b.x) < 1.0:
-				canvas.draw_line(a, b, col, 2.0)
-			else:
-				var mid := a.y + 8.0
-				canvas.draw_polyline(PackedVector2Array([a, Vector2(a.x, mid), Vector2(b.x, mid), b]), col, 2.0))
-	for sk in gs.SKILLS:
-		var id := String(sk["id"])
-		var lv := gs.skill_level(id)
-		var mx := int(sk["max"])
-		var open := gs.skill_open(id)
-		var b := _button("%s\n%s" % [sk["name"], ("Lv %d/%d" % [lv, mx]) if mx > 1 else ("習得済み" if lv > 0 else "未習得")], Vector2(nw, nh), 11)
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.position = pos_of.call(sk)
-		b.size = Vector2(nw, nh)
-		var border := Color(0.45, 0.95, 0.6) if lv >= mx else (Color(0.4, 0.8, 1.0) if gs.can_buy_skill(id) else (Color(0.6, 0.65, 0.75) if open else Color(0.3, 0.3, 0.35)))
-		var bg := Color(0.08, 0.18, 0.12) if lv > 0 else Color(0.04, 0.05, 0.07)
-		var w := 3 if id == _tree_sel else 2
-		if id == _tree_sel:
-			border = Color(1.0, 0.9, 0.4)
-		b.add_theme_stylebox_override("normal", _box(bg, border, w, 4))
-		b.add_theme_stylebox_override("hover", _box(bg.lightened(0.05), border.lightened(0.2), w, 4))
-		if not open:
-			b.modulate = Color(1, 1, 1, 0.45)
-		b.pressed.connect(func():
-			_tree_sel = id
-			_tree_scroll_y = scroll.scroll_vertical
-			_build_tree())
-		canvas.add_child(b)
-	scroll.ready.connect(func(): scroll.scroll_vertical = int(keep_scroll))
-	scroll.set_deferred("scroll_vertical", int(keep_scroll))
+	var hint := Label.new()
+	hint.text = "ドラッグで移動・+/- で拡大縮小・ノードをタップで選択"
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.modulate = Color(1, 1, 1, 0.55)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size = Vector2(side_w - 4.0, 0)
+	side.add_child(hint)
 
 	# 選んだスキルの詳細
 	var sel := gs.skill_def(_tree_sel)
@@ -626,7 +586,10 @@ func _build_tree() -> void:
 	if gs.skill_maxed(sid):
 		dc.text = "[color=#73f29a]最大レベル[/color]"
 	elif not gs.skill_open(sid):
-		dc.text = "[color=#ff8a7a]先に「%s」を習得[/color]" % gs.skill_def(String(sel["parent"]))["name"]
+		var names: PackedStringArray = []
+		for l in gs.skill_links(sid):
+			names.append(String(gs.skill_def(String(l))["name"]))
+		dc.text = "[color=#ff8a7a]つながっているスキル（%s）のどれかを先に習得[/color]" % "・".join(names)
 	else:
 		dc.text = "必要：" + _mat_bb(gs.skill_cost(sid), true)
 	dv.add_child(dc)
@@ -639,13 +602,13 @@ func _build_tree() -> void:
 	buy.disabled = not gs.can_buy_skill(sid)
 	buy.pressed.connect(func():
 		if gs.buy_skill(sid):
-			_tree_scroll_y = scroll.scroll_vertical
+			_keep_map()
 			_build_tree())
 	row.add_child(buy)
 	var all := _button("まとめて強化", Vector2(bw, 48), 15)
 	all.pressed.connect(func():
 		var n := gs.buy_all_skills()
-		_tree_scroll_y = scroll.scroll_vertical
+		_keep_map()
 		_build_tree()
 		toast("%d 回強化した" % n if n > 0 else "素材が足りない"))
 	row.add_child(all)
@@ -699,7 +662,7 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 		var tr := gs.trait_def(String(tid))
 		var b := _wide(_msg_box, "惑星 %d：%s\n%s" % [gs.planet + 1, tr["name"], tr["desc"]], 64, 16)
 		b.pressed.connect(func(): main.go_next(String(tid)))
-	var tree := _wide(_msg_box, "先にスキルツリーを見る", 44, 15)
+	var tree := _wide(_msg_box, "先にスキルマップを見る", 44, 15)
 	tree.pressed.connect(func():
 		_after_tree = func(): show_clear(extra, next)
 		_build_tree()
