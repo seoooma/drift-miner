@@ -34,14 +34,9 @@ var _bots: Array = []  # {"pos", "target"}
 var _taps: Array = []  # {"pos", "t"}
 var _glow: Node2D  # 加算合成で描く光（ビーム・噴射・照準）
 var _carrier_pos := Vector2.INF
-var _tex := {}
 
 
 func _ready() -> void:
-	for k in ["drone", "drill", "satellite", "bomb", "station", "bot", "carrier"]:
-		_tex[k] = load("res://assets/sprites/%s.png" % k)
-	for k in ["circle_05", "star_04"]:
-		_tex[k] = Fx.tex("res://assets/fx/%s.png" % k)
 	_glow = Node2D.new()
 	_glow.material = Fx.additive()
 	_glow.z_index = 2
@@ -171,7 +166,7 @@ func _process(delta: float) -> void:
 				planet.hit_area(drill_c, Planet.CELL * 2.5, drill * 0.5)
 				Audio.play("drill")
 				if fx_layer != null:
-					Fx.sparks(fx_layer, drill_c, Color(1.0, 0.7, 0.35), 8, 90.0)
+					Fx.sparks(fx_layer, drill_c, Neon.ORANGE, 8, 90.0)
 	_drill_flash = maxf(0.0, _drill_flash - delta * 4.0)
 
 	# 精密レーザー：上空の衛星から、ドリルと離れた価値の高いマスを撃ち抜く
@@ -234,7 +229,7 @@ func _process(delta: float) -> void:
 			_shake(3.0)
 			if fx_layer != null:
 				Fx.explosion(fx_layer, b["to"], Planet.CELL * 5.0, true)
-				Fx.burst(fx_layer, b["to"], Color(0.8, 0.5, 1.0), 20, 160.0)
+				Fx.burst(fx_layer, b["to"], Neon.MAGENTA, 16, 160.0)
 
 	# コアランス：機体の集まる場所から惑星の中心核へまっすぐ掘り進む
 	var lan := gs.tool_dps("lance")
@@ -282,24 +277,31 @@ func tap_effect(p: Vector2) -> void:
 	_taps.append({"pos": p, "t": 0.0})
 
 
-## 画像を中心・向き・大きさ（ワールド単位の幅）を指定して描く
-func _sprite(t: Texture2D, pos: Vector2, rot: float, width: float, col: Color = Color.WHITE, ci: CanvasItem = null) -> void:
-	var c: CanvasItem = self if ci == null else ci
-	var k := width / float(t.get_width())
-	c.draw_set_transform(pos, rot, Vector2(k, k))
-	c.draw_texture(t, -t.get_size() * 0.5, col)
-	c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+## 線画の機体。下に太く薄い線（にじみ）、上に細い線。size はワールド単位の全長。
+func _ship(id: String, pos: Vector2, rot: float, size: float, col: Color, w_px: float = 1.5) -> void:
+	var pts := Neon.ship(id, pos, size, rot)
+	var w := Fx.px(w_px)
+	draw_polyline(pts, Color(col, 0.25), w * 4.0)
+	draw_polyline(pts, col, w)
 
 
-func _glow_dot(pos: Vector2, r: float, col: Color) -> void:
-	var t: Texture2D = _tex["circle_05"]
-	_glow.draw_texture_rect(t, Rect2(pos - Vector2(r, r), Vector2(r, r) * 2.0), false, col)
+## 光る細い線（レーザー・ビーム）。w_px は画面のピクセル。
+func _beam(a: Vector2, b: Vector2, col: Color, w_px: float) -> void:
+	var w := Fx.px(w_px)
+	_glow.draw_line(a, b, Neon.glow(col), w * 4.0)
+	_glow.draw_line(a, b, col, w)
 
 
-func _beam(a: Vector2, b: Vector2, col: Color, w: float) -> void:
-	_glow.draw_line(a, b, Color(col, 0.25), w * 3.0, true)
-	_glow.draw_line(a, b, Color(col, 0.6), w * 1.4, true)
-	_glow.draw_line(a, b, Color(1, 1, 1, 0.9), w * 0.5, true)
+## 当たった所の小さな明るい点
+func _hit_dot(p: Vector2, col: Color, r_px: float = 2.0) -> void:
+	_glow.draw_circle(p, Fx.px(r_px * 2.5), Neon.glow(col))
+	_glow.draw_circle(p, Fx.px(r_px), Color(1, 1, 1, 0.95))
+
+
+## 揺らぐ輪（範囲攻撃）。約4フレームごとに形を作り直す。
+func _jring(c: Vector2, r: float, col: Color, salt: int = 0) -> void:
+	var pts := Neon.jitter_ring(c, r, Fx.px(3.0), int(_t * 15.0) * 7919 + salt)
+	Neon.glow_poly(_glow, pts, col, Fx.px(1.5), Fx.px(6.0))
 
 
 func _draw() -> void:
@@ -311,127 +313,111 @@ func _draw() -> void:
 	# 母艦
 	if _carrier_pos != Vector2.INF and not planet.done:
 		var up := (_carrier_pos - c).normalized()
-		_sprite(_tex["carrier"], _carrier_pos, up.angle() - PI * 0.5 + PI, 20.0, Color(0.75, 0.82, 0.95))
+		_ship("carrier", _carrier_pos, (-up).angle(), 12.0, Neon.LINE)
 
 	# ドローン
-	var dc: Color = gs.TOOLS[0]["color"]
 	for d in _drones:
 		var dp: Vector2 = d["pos"]
 		var tgt := int(d["target"])
 		var dir := (dp - c).normalized() * -1.0
 		if planet.is_alive(tgt):
 			dir = (planet.cell_center(tgt) - dp).normalized()
-		_sprite(_tex["drone"], dp, dir.angle() + PI * 0.5, 9.0, dc.lerp(Color.WHITE, 0.35))
+		_ship("drone", dp, dir.angle(), 5.5, Neon.CYAN)
 
 	# パルスドリル
 	if gs.tool_level("cutter") > 0 and _drill_pos != Vector2.INF:
-		var cc: Color = gs.TOOLS[1]["color"]
 		var aim := planet.cell_center(_drill_target) if planet.is_alive(_drill_target) else _drill_pos + Vector2.DOWN * 8.0
 		var dir := (aim - _drill_pos).normalized() if _drill_pos.distance_to(aim) > 0.5 else Vector2.DOWN
-		_sprite(_tex["drill"], _drill_pos - dir * 2.0, dir.angle() + PI * 0.5, 13.0 + _drill_flash * 2.0, cc.lerp(Color.WHITE, 0.25))
+		_ship("cutter", _drill_pos - dir * 2.0, dir.angle(), 8.0 + _drill_flash * 1.5, Neon.LINE)
 
-	# レーザー衛星
+	# レーザー衛星（胴と2枚のパネル）
 	if gs.tool_level("laser") > 0 and _sat_pos != Vector2.INF:
-		var lc: Color = gs.TOOLS[2]["color"]
-		_sprite(_tex["satellite"], _sat_pos, sin(_t * 0.6) * 0.3, 15.0, lc.lerp(Color.WHITE, 0.35))
+		var rot := sin(_t * 0.6) * 0.3
+		_ship("laser", _sat_pos, rot, 8.0, Neon.LINE)
+		var ax := Vector2.from_angle(rot)
+		for sgn in [-1.0, 1.0]:
+			var pc: Vector2 = _sat_pos + ax * 4.5 * sgn
+			var panel := PackedVector2Array([pc + Vector2(-1.8, -1.5).rotated(rot), pc + Vector2(1.8, -1.5).rotated(rot), pc + Vector2(1.8, 1.5).rotated(rot), pc + Vector2(-1.8, 1.5).rotated(rot), pc + Vector2(-1.8, -1.5).rotated(rot)])
+			draw_polyline(panel, Neon.LINE, Fx.px(1.0))
 
 	# 爆雷
-	var bc: Color = gs.TOOLS[3]["color"]
 	for b in _bombs:
 		var from: Vector2 = b["from"]
 		var to: Vector2 = b["to"]
 		var p: Vector2 = from.lerp(to, ease(float(b["t"]), 2.0))
-		_sprite(_tex["bomb"], p, (to - from).angle() + PI * 0.5, 7.0, bc.lerp(Color.WHITE, 0.3))
-		draw_arc(to, Planet.CELL * 4.5 * (1.0 - float(b["t"]) * 0.5), 0.0, TAU, 32, Color(bc, 0.35 + 0.3 * float(b["t"])), 1.0, true)
+		_ship("bomb", p, (to - from).angle(), 5.0, Neon.LINE)
 
 	# ランスの基地
 	if _lance_hit != Vector2.INF:
-		var nc: Color = gs.TOOLS[4]["color"]
-		_sprite(_tex["station"], _lance_from, _t * 0.5, 16.0, nc.lerp(Color.WHITE, 0.3))
+		_ship("lance", _lance_from, _t * 0.5, 10.0, Neon.LINE)
 
-	# スウォーム
+	# スウォーム（小さな四角）
 	if gs.tool_level("swarm") > 0:
-		var sc: Color = gs.TOOLS[5]["color"]
+		var s := Fx.px(2.0)
 		for b in _bots:
-			_sprite(_tex["bot"], b["pos"], _t * 3.0, 3.0, sc)
+			draw_rect(Rect2((b["pos"] as Vector2) - Vector2(s, s) * 0.5, Vector2(s, s)), Neon.LINE)
 
 
-## 光るもの（加算合成）：照準・ビーム・噴射・着弾の光
+## 光るもの（加算合成）：照準・ビーム・範囲攻撃の輪・当たった点
 func _draw_glow() -> void:
 	if planet == null:
 		return
 	var gs := GameState
 	var c := planet.position
+	var hair := Fx.px(1.0)
 
 	# 機体の集まる場所（うっすらした照準）
 	if not planet.done:
-		var fc := Color(0.6, 0.85, 1.0, 0.12 + 0.05 * sin(_t * 3.0))
-		_glow.draw_arc(focus, Planet.CELL * 9.0, 0.0, TAU, 64, fc, 1.0, true)
-		for k in 4:
-			var a := TAU * k / 4.0 + _t * 0.3
-			_glow.draw_line(focus + Vector2.from_angle(a) * Planet.CELL * 8.2, focus + Vector2.from_angle(a) * Planet.CELL * 9.8, Color(0.6, 0.85, 1.0, 0.35), 1.0, true)
+		var fc := Color(Neon.CYAN, 0.18 + 0.06 * sin(_t * 3.0))
+		_glow.draw_arc(focus, Planet.CELL * 9.0, 0.0, TAU, 64, fc, hair)
 
-	# 移動先の目印
+	# 移動先の目印（四角の角かっこ）
 	if dest != Vector2.INF:
-		var pc := Color(0.4, 1.0, 0.75, 0.6 + 0.3 * sin(_t * 6.0))
-		_glow.draw_arc(dest, 5.0 + 1.5 * sin(_t * 4.0), 0.0, TAU, 24, pc, 1.2, true)
-		_glow.draw_arc(dest, 9.0, _t * 2.0, _t * 2.0 + PI * 0.6, 12, Color(pc, 0.5), 1.0, true)
-		_glow.draw_arc(dest, 9.0, _t * 2.0 + PI, _t * 2.0 + PI * 1.6, 12, Color(pc, 0.5), 1.0, true)
-		_glow_dot(dest, 10.0, Color(pc, 0.25))
+		var pc := Color(Neon.LIME, 0.7 + 0.3 * sin(_t * 6.0))
+		var r := 6.0 + 1.0 * sin(_t * 4.0)
+		Neon.brackets(_glow, Rect2(dest - Vector2(r, r), Vector2(r, r) * 2.0), pc, r * 0.8, Fx.px(1.5))
+		Neon.brackets(_glow, Rect2(dest - Vector2(r, r), Vector2(r, r) * 2.0), Neon.glow(pc), r * 0.8, Fx.px(5.0))
+		_glow.draw_rect(Rect2(dest - Vector2(hair, hair), Vector2(hair, hair) * 2.0), pc)
 
 	# 母艦のエンジン
 	if _carrier_pos != Vector2.INF and not planet.done:
 		var up := (_carrier_pos - c).normalized()
-		_glow_dot(_carrier_pos + up * 11.0, 6.0 + sin(_t * 20.0), Color(0.45, 0.75, 1.0, 0.7))
+		_hit_dot(_carrier_pos + up * 6.0, Neon.CYAN, 1.0 + 0.4 * sin(_t * 20.0))
 
-	# ドローンのビームと噴射
-	var dc: Color = gs.TOOLS[0]["color"]
+	# ドローンのビーム
+	var dc := Neon.CYAN
 	for d in _drones:
 		var dp: Vector2 = d["pos"]
 		var tgt := int(d["target"])
 		if planet.is_alive(tgt):
 			var tp := planet.cell_center(tgt)
 			if dp.distance_to(tp) < Planet.CELL * 4.0:
-				_beam(dp, tp, dc, 1.0 + 0.3 * sin(_t * 30.0))
-				_glow_dot(tp, 5.0, Color(dc, 0.8))
-		_glow_dot(dp, 4.0, Color(dc, 0.35))
+				_beam(dp, tp, dc, 1.0)
+				_hit_dot(tp, dc, 1.2)
 
-	# パルスドリルの光
+	# パルスドリル：砕くたびに揺らぐ輪
 	if gs.tool_level("cutter") > 0 and _drill_pos != Vector2.INF:
-		var cc: Color = gs.TOOLS[1]["color"]
-		_glow_dot(_drill_pos, 6.0 + _drill_flash * 10.0, Color(cc, 0.35 + _drill_flash * 0.5))
 		if _drill_flash > 0.0 and planet.is_alive(_drill_target):
 			var aim := planet.cell_center(_drill_target)
-			_glow.draw_arc(aim, Planet.CELL * 2.5 * (1.2 - _drill_flash * 0.5), 0.0, TAU, 32, Color(cc, _drill_flash), 1.5, true)
+			_jring(aim, Planet.CELL * 2.5 * (1.2 - _drill_flash * 0.5), Color(Neon.ORANGE, _drill_flash), 1)
 
-	# レーザー
+	# レーザー：細い赤い線と、当たった所の明るい点
 	if gs.tool_level("laser") > 0 and _sat_pos != Vector2.INF:
-		var lc: Color = gs.TOOLS[2]["color"]
-		_glow_dot(_sat_pos, 7.0, Color(lc, 0.4))
 		if _laser_hit != Vector2.INF:
-			_beam(_sat_pos, _laser_hit, lc, 1.6)
-			_glow_dot(_laser_hit, 9.0 + sin(_t * 40.0) * 2.0, Color(lc, 0.9))
+			_beam(_sat_pos, _laser_hit, Neon.RED, 1.5)
+			_hit_dot(_laser_hit, Neon.RED, 2.0)
 
-	# 爆雷の噴射
-	var bc: Color = gs.TOOLS[3]["color"]
+	# 爆雷：落ちる先の揺らぐ輪
 	for b in _bombs:
-		var p: Vector2 = (b["from"] as Vector2).lerp(b["to"], ease(float(b["t"]), 2.0))
-		_glow_dot(p, 6.0, Color(bc, 0.6))
+		var k := float(b["t"])
+		_jring(b["to"], Planet.CELL * 4.5 * (1.0 - k * 0.5), Color(Neon.MAGENTA, 0.45 + 0.4 * k), 2)
 
 	# ランス
 	if _lance_hit != Vector2.INF:
-		var nc: Color = gs.TOOLS[4]["color"]
-		_beam(_lance_from, _lance_hit, nc, 2.4)
-		_glow_dot(_lance_hit, 10.0, Color(nc, 0.8))
-		_glow_dot(_lance_from, 9.0, Color(nc, 0.5))
-
-	# スウォーム
-	if gs.tool_level("swarm") > 0:
-		var sc: Color = gs.TOOLS[5]["color"]
-		for b in _bots:
-			_glow_dot(b["pos"], 2.5, Color(sc, 0.5))
+		_beam(_lance_from, _lance_hit, Neon.LIME, 2.0)
+		_hit_dot(_lance_hit, Neon.LIME, 2.5)
 
 	# タップした場所の波紋
 	for tp in _taps:
 		var k := float(tp["t"])
-		_glow.draw_arc(tp["pos"], 3.0 + k * 14.0, 0.0, TAU, 32, Color(0.5, 1.0, 0.85, 1.0 - k), 1.5, true)
+		_glow.draw_arc(tp["pos"], 3.0 + k * 14.0, 0.0, TAU, 32, Color(Neon.LIME, 1.0 - k), Fx.px(1.5))

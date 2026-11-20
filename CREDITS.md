@@ -4,17 +4,7 @@
 商用・非商用を問わず自由に使え、クレジットの表記は必須ではありませんが、感謝を込めて記載します。
 CC0 の全文は [`assets/LICENSE-CC0-1.0.txt`](assets/LICENSE-CC0-1.0.txt) にあります。
 
-画像は元の素材を縮小し、一部は色付けや合成をしています（UI の枠は、ガラス部分を暗い色で塗りつぶして不透明にしています）。
-
-## 画像（Kenney / www.kenney.nl、CC0）
-
-| 使い道 | ファイル | 元の素材 |
-| --- | --- | --- |
-| 機体（ドローン・ドリル・衛星・爆雷・ランス基地・ナノボット・母艦） | `assets/sprites/*.png` | Simple Space |
-| 背景の地模様 | `assets/sprites/bg_tile.png` | Space Shooter Remastered（darkPurple） |
-| 火花・光・煙・衝撃波などの粒子 | `assets/fx/*.png` | Particle Pack |
-| 爆発のアニメーション | `assets/fx/explosion/`、`assets/fx/sonic/` | Explosion Pack |
-| ボタン・パネルの枠 | `assets/ui/*.png` | UI Pack - Sci-Fi |
+画像の素材は使っていません。見た目（機体・アイコン・地形・演出・UI）はすべてコードで線と単色の図形として描いています（下の「自作」）。
 
 ## 効果音（Kenney / www.kenney.nl、CC0）
 
@@ -32,10 +22,18 @@ CC0 の全文は [`assets/LICENSE-CC0-1.0.txt`](assets/LICENSE-CC0-1.0.txt) に�
 | 遺物を見つけたときのジングル | `assets/audio/relic.ogg` | Beatscribe「treasure」（homebrew_vgm、SNES 風） | CC0 1.0 |
 | 惑星を破壊したときのジングル | `assets/audio/clear.ogg` | Beatscribe「victory」（homebrew_vgm、SNES 風） | CC0 1.0 |
 
-## フォント
+## フォント（SIL Open Font License 1.1）
 
-Noto Sans JP（サブセット）、SIL Open Font License 1.1。全文は [`fonts/OFL.txt`](fonts/OFL.txt)。
+| 使い道 | ファイル | フォント | ライセンス全文 |
+| --- | --- | --- | --- |
+| 数字と英字（等幅） | `fonts/ShareTechMono-Regular.ttf` | Share Tech Mono（Carrois Type Design） | [`fonts/OFL-ShareTechMono.txt`](fonts/OFL-ShareTechMono.txt) |
+| 日本語（等幅、使う文字だけのサブセット） | `fonts/MPLUS1Code-Subset.ttf` | M PLUS 1 Code（The M+ FONTS Project） | [`fonts/OFL-MPLUS1Code.txt`](fonts/OFL-MPLUS1Code.txt) |
+| 上の2つにない記号の予備 | `fonts/NotoSansJP-Subset.ttf` | Noto Sans JP（サブセット） | [`fonts/OFL.txt`](fonts/OFL.txt) |
+
+どれも Google Fonts のリポジトリ（github.com/google/fonts）から取得しました。
 
 ## 自作
 
-惑星のブロックの立体表現（`shaders/cells.gdshader`）、スキルマップ、背景の星雲と星、ビームや照準の光は、コードで描いています。
+見た目の決まりごと（色・線の太さ・にじみ）は `scripts/neon.gd` に一か所でまとめています。
+機体とボタンの線のアイコン、惑星の平らな塗りと階段状の輪郭線（`shaders/cells.gdshader`）、背景の方眼と星、
+揺らぐ輪・四角い粒・ビームなどの演出、スキルマップは、すべてコードで描いています。

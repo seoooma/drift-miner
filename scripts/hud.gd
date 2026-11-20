@@ -3,22 +3,22 @@ extends CanvasLayer
 ## 下（横持ちでは右）：採掘ツールの一覧。パネル：スキルツリー、遺物、惑星クリア、放置報酬。
 
 const BUY_MODES := [1, 10, 0]  # 0 = 買えるだけ
-const TOOL_ICONS := {"drone": "drone", "cutter": "drill", "laser": "satellite", "bomb": "bomb", "lance": "station", "swarm": "bot"}
 
 var main: Node = null
 
 var _theme: Theme
 var _overlay: Control
-var _mat_label: RichTextLabel
 var _credit_label: Label
 var _rate_label: Label
-var _planet_label: Label
+var _planet_label: RichTextLabel
 var _toast: Label
 var _toast_time: float = 0.0
 var _banner: Label
 var _banner_time: float = 0.0
 var _side: VBoxContainer
 var _sound_btn: Button
+var _skill_btn: Button
+var _dot_t: float = 0.0
 var _tool_panel: PanelContainer
 var _tool_rows := {}
 var _buy_btn: Button
@@ -46,46 +46,49 @@ func _ready() -> void:
 	_overlay.draw.connect(_draw_overlay)
 	add_child(_overlay)
 
-	_mat_label = RichTextLabel.new()
-	_mat_label.bbcode_enabled = true
-	_mat_label.fit_content = true
-	_mat_label.scroll_active = false
-	_mat_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	_mat_label.add_theme_font_size_override("normal_font_size", 14)
-	_mat_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-	_mat_label.add_theme_constant_override("outline_size", 4)
-	_mat_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_mat_label)
-	_credit_label = _make_label(28)
+	_credit_label = _make_label(30)
 	_credit_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_rate_label = _make_label(14)
+	_rate_label = _make_label(13)
 	_rate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_rate_label.modulate = Color(1.0, 0.75, 0.4)
-	_planet_label = _make_label(14)
-	_planet_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_rate_label.add_theme_color_override("font_color", Neon.ORANGE)
+	_planet_label = RichTextLabel.new()
+	_planet_label.bbcode_enabled = true
+	_planet_label.fit_content = true
+	_planet_label.scroll_active = false
+	_planet_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_planet_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	Neon.plain_text(_planet_label, 12)
+	add_child(_planet_label)
 
+	# 左のボタン（スキル・遺物・音）：黒い四角に差し色の枠と白い線のアイコン
 	_side = VBoxContainer.new()
-	_side.add_theme_constant_override("separation", 8)
+	_side.add_theme_constant_override("separation", 10)
 	add_child(_side)
-	for spec in [["スキル", _open_tree], ["遺物", _open_relics]]:
-		var b := _button(spec[0], Vector2(70, 44), 15)
-		b.pressed.connect(spec[1])
-		_side.add_child(b)
-	_sound_btn = _button("", Vector2(70, 36), 13)
+	var skill_btn := _icon_button("skill", "スキル", Neon.CYAN)
+	skill_btn.pressed.connect(_open_tree)
+	_skill_btn = skill_btn
+	var relic_btn := _icon_button("relic", "遺物", Neon.MAGENTA)
+	relic_btn.pressed.connect(_open_relics)
+	_sound_btn = _icon_button("sound", "音 ON", Neon.ORANGE)
 	_sound_btn.pressed.connect(func():
 		Audio.set_enabled(not Audio.enabled)
 		_update_sound_btn())
-	_side.add_child(_sound_btn)
 	_update_sound_btn()
 
 	_build_tool_panel()
 
-	_toast = _make_label(17)
+	_toast = _make_label(15)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_banner = _make_label(26)
+	_banner = _make_label(18)
 	_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# お知らせは黒い帯に細い枠を付けて、演出の上でも読めるようにする
+	for pair in [[_toast, Neon.CYAN], [_banner, Neon.YELLOW]]:
+		var sb := _box(Color(0, 0, 0, 0.88), Color(pair[1], 0.8), 1)
+		sb.set_content_margin_all(10)
+		(pair[0] as Label).add_theme_stylebox_override("normal", sb)
+		(pair[0] as Label).modulate.a = 0.0
 
 	_tree_panel = _make_panel()
 	_tree_box = _panel_box(_tree_panel)
@@ -96,12 +99,13 @@ func _ready() -> void:
 # ---------------------------------------------------------------- 部品
 
 
-func _box(bg: Color, border: Color, bw: int = 2, radius: int = 6) -> StyleBoxFlat:
+func _box(bg: Color, border: Color, bw: int = 1, _radius: int = 0) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg
 	sb.border_color = border
 	sb.set_border_width_all(bw)
-	sb.set_corner_radius_all(radius)
+	sb.set_corner_radius_all(0)
+	sb.anti_aliasing = false
 	sb.content_margin_left = 6
 	sb.content_margin_right = 6
 	sb.content_margin_top = 4
@@ -109,52 +113,54 @@ func _box(bg: Color, border: Color, bw: int = 2, radius: int = 6) -> StyleBoxFla
 	return sb
 
 
-## Kenney の UI 素材（CC0）を9分割で伸ばす枠
-func _tex_box(path: String, margin: float, col: Color, content: float = 8.0) -> StyleBoxTexture:
-	var sb := StyleBoxTexture.new()
-	sb.texture = load(path)
-	sb.texture_margin_left = margin
-	sb.texture_margin_right = margin
-	sb.texture_margin_top = margin
-	sb.texture_margin_bottom = margin
-	sb.modulate_color = col
-	sb.content_margin_left = content + 2.0
-	sb.content_margin_right = content + 2.0
-	sb.content_margin_top = content * 0.6
-	sb.content_margin_bottom = content * 0.6
-	return sb
-
-
 func _make_theme() -> Theme:
 	var th := Theme.new()
-	var btn := "res://assets/ui/button.png"
-	th.set_stylebox("normal", "Button", _tex_box(btn, 14, Color(0.2, 0.42, 0.62)))
-	th.set_stylebox("hover", "Button", _tex_box(btn, 14, Color(0.28, 0.55, 0.78)))
-	th.set_stylebox("pressed", "Button", _tex_box(btn, 14, Color(0.45, 0.75, 0.95)))
-	th.set_stylebox("disabled", "Button", _tex_box(btn, 14, Color(0.16, 0.18, 0.24)))
+	th.default_font = Neon.font()
+	th.set_stylebox("normal", "Button", BracketBox.new(Neon.BG, Neon.MUTED, Neon.CYAN))
+	th.set_stylebox("hover", "Button", BracketBox.new(Neon.BG, Neon.LINE, Neon.CYAN))
+	th.set_stylebox("pressed", "Button", BracketBox.new(Color(Neon.CYAN, 0.15), Neon.CYAN, Neon.CYAN))
+	th.set_stylebox("hover_pressed", "Button", BracketBox.new(Color(Neon.CYAN, 0.15), Neon.CYAN, Neon.CYAN))
+	th.set_stylebox("disabled", "Button", BracketBox.new(Neon.BG, Color(Neon.MUTED, 0.4), Color(Neon.CYAN, 0.4)))
 	th.set_stylebox("focus", "Button", StyleBoxEmpty.new())
-	th.set_color("font_color", "Button", Color(0.94, 0.97, 1.0))
+	th.set_color("font_color", "Button", Neon.TEXT)
 	th.set_color("font_hover_color", "Button", Color.WHITE)
-	th.set_color("font_disabled_color", "Button", Color(0.55, 0.6, 0.68))
-	th.set_color("font_outline_color", "Button", Color(0.0, 0.03, 0.08, 0.8))
-	th.set_constant("outline_size", "Button", 3)
-	var panel := _tex_box("res://assets/ui/panel.png", 22, Color(0.75, 0.9, 1.0, 0.97), 16.0)
-	panel.content_margin_top = 16
-	panel.content_margin_bottom = 16
+	th.set_color("font_pressed_color", "Button", Color.WHITE)
+	th.set_color("font_hover_pressed_color", "Button", Color.WHITE)
+	th.set_color("font_disabled_color", "Button", Color(Neon.TEXT, 0.4))
+	th.set_constant("outline_size", "Button", 0)
+	var panel := _box(Neon.PANEL, Neon.CYAN, 1)
+	panel.set_content_margin_all(16)
 	th.set_stylebox("panel", "PanelContainer", panel)
+	for cls in ["Label", "RichTextLabel"]:
+		th.set_color("font_shadow_color", cls, Neon.SHADOW)
+		th.set_constant("shadow_offset_x", cls, 1)
+		th.set_constant("shadow_offset_y", cls, 1)
+		th.set_constant("outline_size", cls, 0)
+	th.set_color("font_color", "Label", Neon.TEXT)
+	# スクロールバー：細い平らな線
+	var track := _box(Neon.TRACK, Color(0, 0, 0, 0), 0)
+	track.set_content_margin_all(0)
+	track.content_margin_left = 2
+	track.content_margin_right = 2
+	var grab := _box(Color(Neon.CYAN, 0.6), Color(0, 0, 0, 0), 0)
+	var grab_hi := _box(Neon.CYAN, Color(0, 0, 0, 0), 0)
+	th.set_stylebox("scroll", "VScrollBar", track)
+	th.set_stylebox("grabber", "VScrollBar", grab)
+	th.set_stylebox("grabber_highlight", "VScrollBar", grab_hi)
+	th.set_stylebox("grabber_pressed", "VScrollBar", grab_hi)
+	th.set_color("default_color", "RichTextLabel", Neon.TEXT)
 	return th
 
 
 func _update_sound_btn() -> void:
-	_sound_btn.text = "音 ON" if Audio.enabled else "音 OFF"
-	_sound_btn.modulate = Color.WHITE if Audio.enabled else Color(1, 1, 1, 0.6)
+	_sound_btn.set_meta("icon", "sound" if Audio.enabled else "mute")
+	(_sound_btn.get_meta("label_node") as Label).text = "音 ON" if Audio.enabled else "音 OFF"
+	_sound_btn.queue_redraw()
 
 
 func _make_label(font_size: int) -> Label:
 	var l := Label.new()
-	l.add_theme_font_size_override("font_size", font_size)
-	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-	l.add_theme_constant_override("outline_size", 4)
+	Neon.plain_text(l, font_size)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(l)
 	return l
@@ -171,9 +177,45 @@ func _button(text: String, min_size: Vector2, font_size: int) -> Button:
 	return b
 
 
+## 左に並ぶ四角いボタン（約44px）。名前は小さく下に添える。右上の赤い点はお知らせ。
+func _icon_button(icon: String, label: String, accent: Color) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(46, 46)
+	b.focus_mode = Control.FOCUS_NONE
+	b.flat = true
+	for st in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
+		b.add_theme_stylebox_override(st, StyleBoxEmpty.new())
+	b.set_meta("icon", icon)
+	b.set_meta("label", label)
+	b.set_meta("dot", false)
+	b.pressed.connect(func(): Audio.play("click"))
+	b.draw.connect(func():
+		var r := Rect2(Vector2.ZERO, b.size)
+		var down := b.is_pressed() or b.get_draw_mode() == BaseButton.DRAW_PRESSED
+		b.draw_rect(r, Color(accent, 0.18) if down else Neon.BG)
+		b.draw_rect(r.grow(-1.0), Neon.glow(accent), false, 5.0)
+		b.draw_rect(r.grow(-1.0), accent, false, 2.0)
+		Neon.icon(b, String(b.get_meta("icon")), r.get_center(), 24.0, Neon.LINE, 1.5)
+		if bool(b.get_meta("dot")):
+			b.draw_circle(Vector2(b.size.x - 1.0, 1.0), 4.5, Neon.RED))
+	b.button_down.connect(b.queue_redraw)
+	b.button_up.connect(b.queue_redraw)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	box.add_child(b)
+	var l := Label.new()
+	Neon.plain_text(l, 10, Neon.MUTED)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.text = label
+	box.add_child(l)
+	b.set_meta("label_node", l)
+	_side.add_child(box)
+	return b
+
+
 func _make_panel() -> PanelContainer:
 	var back := ColorRect.new()
-	back.color = Color(0.0, 0.0, 0.02, 0.72)
+	back.color = Color(0, 0, 0, 0.8)
 	back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	back.visible = false
 	add_child(back)
@@ -248,7 +290,7 @@ func _mat_bb(cost: Dictionary, check: bool) -> String:
 		var col: String = (gs.MAT_COLORS[m] as Color).to_html(false)
 		var num := gs.fmt(float(cost[m]))
 		if check and not ok:
-			num = "[color=#ff6a5a]%s[/color]" % num
+			num = "[color=#E8504A]%s[/color]" % num
 		parts.append("[color=#%s]■[/color]%s %s" % [col, gs.MAT_NAMES[m], num])
 	return "  ".join(parts)
 
@@ -285,7 +327,8 @@ func relic_found(r: Dictionary) -> void:
 func _build_tool_panel() -> void:
 	_tool_panel = PanelContainer.new()
 	_tool_panel.theme = _theme
-	var sb := _tex_box("res://assets/ui/panel.png", 22, Color(0.8, 0.9, 1.0, 0.96), 6.0)
+	var sb := _box(Neon.BG, Neon.CYAN, 1)
+	sb.set_content_margin_all(8)
 	_tool_panel.add_theme_stylebox_override("panel", sb)
 	add_child(_tool_panel)
 	var v := VBoxContainer.new()
@@ -295,10 +338,11 @@ func _build_tool_panel() -> void:
 	v.add_child(head)
 	var t := Label.new()
 	t.text = "採掘ツール"
-	t.add_theme_font_size_override("font_size", 17)
+	Neon.plain_text(t, 14, Neon.MUTED)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(t)
-	_buy_btn = _button("", Vector2(96, 34), 15)
+	_buy_btn = _button("", Vector2(104, 44), 13)
 	_buy_btn.pressed.connect(func(): _buy_mode = (_buy_mode + 1) % BUY_MODES.size())
 	head.add_child(_buy_btn)
 	var scroll := ScrollContainer.new()
@@ -311,59 +355,117 @@ func _build_tool_panel() -> void:
 	scroll.add_child(list)
 	for td in GameState.TOOLS:
 		var id := String(td["id"])
-		var col: Color = td["color"]
 		var row := PanelContainer.new()
-		var rs := _box(Color(0.03, 0.05, 0.08, 0.92), Color(col, 0.55), 1, 6)
-		rs.border_width_left = 4
-		rs.shadow_color = Color(0, 0, 0, 0.35)
-		rs.shadow_size = 3
-		rs.set_content_margin_all(8)
+		var rs := _box(Neon.BG, Color(Neon.CYAN, 0.45), 1)
+		rs.content_margin_left = 8
+		rs.content_margin_right = 6
+		rs.content_margin_top = 6
+		rs.content_margin_bottom = 6
 		row.add_theme_stylebox_override("panel", rs)
 		list.add_child(row)
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 8)
 		row.add_child(h)
-		var icon := TextureRect.new()
-		icon.texture = load("res://assets/sprites/%s.png" % TOOL_ICONS[id])
-		icon.custom_minimum_size = Vector2(26, 26)
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.modulate = col.lerp(Color.WHITE, 0.3)
+		# ツールの色はこの小さなアイコンにだけ使う
+		var icon := Control.new()
+		icon.custom_minimum_size = Vector2(22, 22)
 		icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		var tc: Color = Neon.TOOL_COLORS.get(id, Neon.CYAN)
+		icon.draw.connect(func():
+			Neon.icon(icon, id, icon.size * 0.5, 20.0, Neon.glow(tc), 4.0)
+			Neon.icon(icon, id, icon.size * 0.5, 20.0, tc, 1.5))
 		h.add_child(icon)
 		var info := VBoxContainer.new()
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		info.add_theme_constant_override("separation", 2)
+		info.add_theme_constant_override("separation", 3)
 		h.add_child(info)
 		var top := HBoxContainer.new()
 		info.add_child(top)
 		var name := Label.new()
-		name.add_theme_font_size_override("font_size", 16)
+		Neon.plain_text(name, 14)
 		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name.clip_text = true
 		name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		top.add_child(name)
 		var dps := Label.new()
-		dps.add_theme_font_size_override("font_size", 14)
-		dps.modulate = Color(0.85, 0.9, 0.95)
+		Neon.plain_text(dps, 13)
+		dps.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		top.add_child(dps)
+		var mid := HBoxContainer.new()
+		mid.add_theme_constant_override("separation", 8)
+		info.add_child(mid)
+		var lv := Label.new()
+		Neon.plain_text(lv, 12, Neon.MUTED)
+		mid.add_child(lv)
 		var sub := Label.new()
-		sub.add_theme_font_size_override("font_size", 13)
-		sub.modulate = Color(1, 1, 1, 0.6)
+		Neon.plain_text(sub, 11, Neon.MUTED)
+		sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sub.clip_text = true
 		sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		info.add_child(sub)
+		mid.add_child(sub)
+		# 強化段階の小さな四角5つ（25レベルごとに1つ埋まる）
+		var pips := Control.new()
+		pips.custom_minimum_size = Vector2(5 * 6 + 4 * 2, 12)
+		pips.draw.connect(func():
+			var n := mini(5, GameState.tool_level(id) / 25)
+			for k in 5:
+				pips.draw_rect(Rect2(k * 8.0, 3.0, 6.0, 6.0), Neon.CYAN if k < n else Neon.TRACK))
+		mid.add_child(pips)
 		var bar := Control.new()
-		bar.custom_minimum_size = Vector2(0, 6)
+		bar.custom_minimum_size = Vector2(0, 4)
 		bar.draw.connect(func():
 			var w := bar.size.x
-			bar.draw_rect(Rect2(0, 0, w, 6), Color(1, 1, 1, 0.08))
-			bar.draw_rect(Rect2(0, 0, w * GameState.milestone_frac(id), 6), col))
+			bar.draw_rect(Rect2(0, 0, w, 4), Neon.TRACK)
+			bar.draw_rect(Rect2(0, 0, w * GameState.milestone_frac(id), 4), Neon.CYAN))
 		info.add_child(bar)
-		var btn := _button("", Vector2(104, 54), 15)
+		var btn := _cost_button()
 		btn.pressed.connect(_on_buy.bind(id))
 		h.add_child(btn)
-		_tool_rows[id] = {"name": name, "dps": dps, "sub": sub, "bar": bar, "btn": btn, "row": row}
+		_tool_rows[id] = {"name": name, "dps": dps, "lv": lv, "sub": sub, "pips": pips, "bar": bar, "btn": btn, "row": row}
+
+
+## 購入ボタン：黒い長方形に灰色の細い枠と角かっこ。上に小さく動作、値段は2行（数 / CR）。
+## 押せないときは全体を40%の濃さにする。
+func _cost_button() -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(92, 58)
+	b.focus_mode = Control.FOCUS_NONE
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var normal := BracketBox.new(Neon.BG, Neon.MUTED, Neon.CYAN)
+	normal.arm = 7.0
+	var down := BracketBox.new(Color(Neon.CYAN, 0.15), Neon.CYAN, Neon.CYAN)
+	down.arm = 7.0
+	for st in ["normal", "hover", "disabled"]:
+		b.add_theme_stylebox_override(st, normal)
+	for st in ["pressed", "hover_pressed"]:
+		b.add_theme_stylebox_override(st, down)
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	b.set_meta("lines", ["", "", ""])
+	b.pressed.connect(func(): Audio.play("click"))
+	b.draw.connect(func():
+		var f := Neon.font()
+		var lines: Array = b.get_meta("lines")
+		var w := b.size.x
+		var y := 15.0
+		var specs := [[String(lines[0]), 10, Neon.MUTED], [String(lines[1]), 15, Neon.TEXT], [String(lines[2]), 11, Neon.TEXT]]
+		for sp in specs:
+			var txt: String = sp[0]
+			if txt != "":
+				var fs: int = sp[1]
+				var tw := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+				b.draw_string(f, Vector2((w - tw) * 0.5 + 1.0, y + 1.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Neon.SHADOW)
+				b.draw_string(f, Vector2((w - tw) * 0.5, y), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, sp[2])
+			y += 17.0 if sp[1] != 10 else 16.0)
+	return b
+
+
+func _set_cost(b: Button, verb: String, cost: String, unit: String, enabled: bool) -> void:
+	var lines: Array = [verb, cost, unit]
+	if lines != b.get_meta("lines") or b.disabled == enabled:
+		b.set_meta("lines", lines)
+		b.disabled = not enabled
+		b.modulate.a = 1.0 if enabled else 0.4
+		b.queue_redraw()
 
 
 func _buy_count(id: String) -> int:
@@ -382,8 +484,8 @@ func _on_buy(id: String) -> void:
 		Audio.play("buy", 0.0, 0.15)
 		var row: PanelContainer = _tool_rows[id]["row"]
 		var tw := row.create_tween()
-		row.modulate = Color(1.6, 1.6, 1.6)
-		tw.tween_property(row, "modulate", Color.WHITE, 0.25)
+		row.self_modulate = Color(1.8, 1.8, 1.8)
+		tw.tween_property(row, "self_modulate", Color.WHITE, 0.25)
 
 
 func _update_tools() -> void:
@@ -398,24 +500,25 @@ func _update_tools() -> void:
 		if not gs.tool_unlocked(id):
 			(r["name"] as Label).text = String(td["name"])
 			(r["dps"] as Label).text = ""
+			(r["lv"] as Label).text = ""
 			(r["sub"] as Label).text = "スキルマップで解放（%s）" % gs.cost_text(gs.skill_cost(id))
-			btn.text = "未解放\nマップへ"
-			btn.disabled = false
+			_set_cost(btn, "", "未解放", "マップへ", true)
 			(r["row"] as PanelContainer).modulate.a = 0.5
 			continue
 		var n := _buy_count(id)
 		var cost := gs.upgrade_cost(id, n)
-		(r["name"] as Label).text = String(td["name"]) + ("  Lv %d" % lv if lv > 0 else "")
+		(r["name"] as Label).text = String(td["name"])
+		(r["lv"] as Label).text = "Lv. %d" % lv
 		(r["dps"] as Label).text = "毎秒 %s" % gs.fmt(gs.tool_dps(id)) if lv > 0 else ""
 		if lv > 0:
 			var gain := gs.tool_dps_at(id, lv + n) - gs.tool_dps(id)
 			(r["sub"] as Label).text = "+%s／次の強化段階まで %d" % [gs.fmt(gain), 25 - lv % 25]
 		else:
 			(r["sub"] as Label).text = String(td["desc"])
-		btn.text = ("強化 ×%d\n%s" % [n, gs.fmt(cost)]) if lv > 0 else ("配備\n%s" % gs.fmt(cost))
-		btn.disabled = cost > gs.credits
+		_set_cost(btn, ("強化 ×%d" % n) if lv > 0 else "配備", gs.fmt(cost), "CR", cost <= gs.credits)
 		(r["row"] as PanelContainer).modulate.a = 1.0
 		(r["bar"] as Control).queue_redraw()
+		(r["pips"] as Control).queue_redraw()
 
 
 # ---------------------------------------------------------------- 配置
@@ -437,14 +540,12 @@ func planet_area() -> Rect2:
 func _layout() -> void:
 	var s := _size()
 	_top_h = 104.0
-	_mat_label.position = Vector2(12, 8)
-	_mat_label.size = Vector2(150, 0)
-	_credit_label.position = Vector2(0, 4)
+	_credit_label.position = Vector2(0, 8)
 	_credit_label.size = Vector2(s.x, 0)
-	_rate_label.position = Vector2(0, 42)
+	_rate_label.position = Vector2(0, 46)
 	_rate_label.size = Vector2(s.x, 0)
-	_planet_label.size = Vector2(190, 0)
-	_planet_label.position = Vector2(s.x - 202.0, 8)
+	_planet_label.size = Vector2(200, 0)
+	_planet_label.position = Vector2(s.x - 212.0, 10)
 	_side.position = Vector2(10, _top_h + 6.0)
 	if _portrait():
 		var ph := clampf(s.y * 0.4, 250.0, 500.0)
@@ -468,16 +569,23 @@ func _process(delta: float) -> void:
 		pair[0].visible = pair[1].visible
 	_layout()
 	var gs := GameState
-	var lines: PackedStringArray = []
-	for m in gs.MATS:
-		lines.append("[color=#%s]■[/color] %s %s" % [(gs.MAT_COLORS[m] as Color).to_html(false), gs.MAT_NAMES[m], gs.fmt(float(gs.mats[m]))])
-	_mat_label.text = "\n".join(lines)
 	_credit_label.text = gs.fmt(gs.credits) + " CR"
 	_rate_label.text = "毎秒 %s ダメージ" % gs.fmt(gs.total_dps())
 	if main != null:
 		var p: Planet = main.planet
 		var t := int(gs.planet_time)
-		_planet_label.text = "惑星 %d：%s\n掘削 %.1f%%\n経過 %d:%02d" % [gs.planet, gs.trait_def()["name"], 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), t / 60, t % 60]
+		_planet_label.text = "[right]惑星 %d：%s\n[color=#%s]掘削 %.1f%%[/color]\n経過 %d:%02d[/right]" % [gs.planet, gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), t / 60, t % 60]
+	_dot_t -= delta
+	if _dot_t <= 0.0:
+		_dot_t = 0.5
+		var can := false
+		for sk in gs.SKILLS:
+			if gs.can_buy_skill(String(sk["id"])):
+				can = true
+				break
+		if can != bool(_skill_btn.get_meta("dot")):
+			_skill_btn.set_meta("dot", can)
+			_skill_btn.queue_redraw()
 	_update_tools()
 	var real := delta / maxf(Engine.time_scale, 0.01)
 	if _toast_time > 0.0:
@@ -493,54 +601,46 @@ func _draw_overlay() -> void:
 	if main == null:
 		return
 	var s := _size()
+	var gs := GameState
 	var p: Planet = main.planet
-	# 惑星が上まで映るので、上の情報欄に暗い帯を敷いて読みやすくする
-	var top := Color(0.01, 0.02, 0.05, 0.88)
-	var bot := Color(0.02, 0.05, 0.1, 0.55)
-	_overlay.draw_polygon(PackedVector2Array([Vector2(0, 0), Vector2(s.x, 0), Vector2(s.x, _top_h), Vector2(0, _top_h)]), PackedColorArray([top, top, bot, bot]))
-	_overlay.draw_rect(Rect2(0, _top_h - 1.0, s.x, 1), Color(0.45, 0.8, 1.0, 0.35))
-	_overlay.draw_rect(Rect2(s.x * 0.3, _top_h - 1.0, s.x * 0.4, 1), Color(0.6, 0.9, 1.0, 0.6))
-	# 掘削の進み具合（角の丸いバー、光沢つき）
-	var bar := Rect2(12, 90, s.x - 24.0, 10)
+	var f := Neon.font()
+	# 上の情報欄は黒で塗るだけ（グラデーションや線の飾りはなし）
+	_overlay.draw_rect(Rect2(0, 0, s.x, _top_h), Color(0, 0, 0, 0.92))
+	# 素材：8px の四角い色見本と、小さな等幅の文字
+	var y := 12.0
+	for m in gs.MATS:
+		var col: Color = gs.MAT_COLORS[m]
+		_overlay.draw_rect(Rect2(12, y + 1.0, 8, 8), col)
+		var txt := "%s %s" % [gs.MAT_NAMES[m], gs.fmt(float(gs.mats[m]))]
+		_overlay.draw_string(f, Vector2(27, y + 11.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Neon.SHADOW)
+		_overlay.draw_string(f, Vector2(26, y + 10.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Neon.TEXT)
+		y += 17.0
+	# 掘削の進み具合：2px の線
 	var frac := clampf(float(p.broken()) / maxf(1.0, p.needed()), 0.0, 1.0)
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(1, 1, 1, 0.07)
-	bg.set_corner_radius_all(5)
-	bg.border_color = Color(0.5, 0.8, 1.0, 0.25)
-	bg.set_border_width_all(1)
-	_overlay.draw_style_box(bg, bar)
+	var ly := _top_h - 6.0
+	_overlay.draw_rect(Rect2(12, ly, s.x - 24.0, 2), Neon.TRACK)
 	if frac > 0.0:
-		var fg := StyleBoxFlat.new()
-		fg.bg_color = Color(0.35, 0.9, 0.55)
-		fg.set_corner_radius_all(5)
-		fg.shadow_color = Color(0.4, 1.0, 0.6, 0.45)
-		fg.shadow_size = 4
-		var fr := Rect2(bar.position, Vector2(maxf(10.0, bar.size.x * frac), bar.size.y))
-		_overlay.draw_style_box(fg, fr)
-		_overlay.draw_rect(Rect2(fr.position + Vector2(4, 2), Vector2(fr.size.x - 8.0, 2)), Color(1, 1, 1, 0.35))
+		var fr := Rect2(12, ly, (s.x - 24.0) * frac, 2)
+		_overlay.draw_rect(fr.grow(2.0), Color(Neon.glow(Neon.ORANGE), 0.25))
+		_overlay.draw_rect(fr, Neon.ORANGE)
 	_draw_minimap(p)
 
 
-## 惑星エリアの右上に、惑星全体の小さな地図と「いま見ている範囲」を描く。
+## 惑星エリアの右上に、四角い枠の小さな地図。惑星は平らな円、いまの場所は小さな点。
 func _draw_minimap(p: Planet) -> void:
-	var tex: Texture2D = p.get("_tex")
-	if tex == null:
-		return
 	var area := planet_area()
-	var m := 92.0
+	var m := 76.0
 	var box := Rect2(area.end.x - m - 10.0, area.position.y + 8.0, m, m)
 	var c := box.get_center()
-	_overlay.draw_circle(c, m * 0.5 + 3.0, Color(0.02, 0.03, 0.08, 0.75))
-	_overlay.draw_arc(c, m * 0.5 + 3.0, 0.0, TAU, 40, Color(1, 1, 1, 0.25), 1.0)
-	_overlay.draw_texture_rect(tex, box, false)
+	_overlay.draw_rect(box, Neon.BG)
+	_overlay.draw_rect(box.grow(-0.5), Neon.MUTED, false, 1.0)
 	var world := p.size * Planet.CELL
-	var k := m / world
-	var cam: Camera2D = main.camera
-	var view := area.size / cam.zoom.x
-	var vc: Vector2 = cam.position + (area.get_center() - _size() * 0.5) / cam.zoom.x
-	var vr := Rect2(c + (vc - p.position - view * 0.5) * k, view * k)
-	_overlay.draw_rect(vr, Color(1, 1, 1, 0.8), false, 1.0)
-	_overlay.draw_circle(c + (main.focus - p.position) * k, 2.5, Color(1.0, 0.9, 0.4))
+	var k := (m - 12.0) / world
+	var pr := maxf(2.0, p.outer * k)
+	_overlay.draw_circle(c, pr, p.fill_color.lightened(0.25))
+	var dot: Vector2 = c + (main.focus - p.position) * k
+	_overlay.draw_circle(dot, 5.0, Neon.glow(Neon.RED))
+	_overlay.draw_circle(dot, 2.5, Neon.RED)
 
 
 # ---------------------------------------------------------------- スキルツリー
@@ -628,7 +728,7 @@ func _build_tree() -> void:
 		sel = gs.SKILLS[0]
 	var sid := String(sel["id"])
 	var detail := PanelContainer.new()
-	var ds := _box(Color(0.05, 0.06, 0.09), Color(1.0, 0.9, 0.4, 0.6), 2, 8)
+	var ds := _box(Neon.BG, Color(Neon.YELLOW, 0.8), 1)
 	ds.set_content_margin_all(10)
 	detail.add_theme_stylebox_override("panel", ds)
 	side.add_child(detail)
@@ -653,12 +753,12 @@ func _build_tree() -> void:
 	dc.add_theme_font_size_override("normal_font_size", 14)
 	dc.custom_minimum_size = Vector2(side_w - 24.0, 0)
 	if gs.skill_maxed(sid):
-		dc.text = "[color=#73f29a]最大レベル[/color]"
+		dc.text = "[color=#9BE86A]最大レベル[/color]"
 	elif not gs.skill_open(sid):
 		var names: PackedStringArray = []
 		for l in gs.skill_links(sid):
 			names.append(String(gs.skill_def(String(l))["name"]))
-		dc.text = "[color=#ff8a7a]つながっているスキル（%s）のどれかを先に習得[/color]" % "・".join(names)
+		dc.text = "[color=#E8504A]つながっているスキル（%s）のどれかを先に習得[/color]" % "・".join(names)
 	else:
 		dc.text = "必要：" + _mat_bb(gs.skill_cost(sid), true)
 	dv.add_child(dc)
@@ -705,9 +805,9 @@ func _open_relics() -> void:
 		for rd in gs.RELICS:
 			var id := String(rd["id"])
 			if counts.has(id):
-				_title(_msg_box, "%s ×%d\n%s" % [rd["name"], counts[id], rd["desc"]], 15, Color(0.5, 1.0, 0.9))
+				_title(_msg_box, "%s ×%d\n%s" % [rd["name"], counts[id], rd["desc"]], 15, Neon.CYAN)
 	var tr := gs.trait_def()
-	_title(_msg_box, "惑星の特性：%s（%s）" % [tr["name"], tr["desc"]], 14, Color(1, 0.85, 0.5))
+	_title(_msg_box, "惑星の特性：%s（%s）" % [tr["name"], tr["desc"]], 14, Neon.ORANGE)
 	var back := _wide(_msg_box, "閉じる", 48, 17)
 	back.pressed.connect(_close)
 	_msg_panel.visible = true
@@ -717,7 +817,7 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	_clear(_msg_box)
 	var gs := GameState
 	var t := int(gs.planet_time)
-	_title(_msg_box, "惑星 %d を破壊した！" % gs.planet, 24, Color(0.6, 1.0, 0.65))
+	_title(_msg_box, "惑星 %d を破壊した！" % gs.planet, 24, Neon.LIME)
 	_title(_msg_box, "所要時間 %d分%02d秒・遺物 %d個" % [t / 60, t % 60, gs.relics.size()], 15, Color(1, 1, 1, 0.75))
 	var got := RichTextLabel.new()
 	got.bbcode_enabled = true
@@ -750,7 +850,7 @@ func show_offline(gain: float, secs: float) -> void:
 	var h := int(secs) / 3600
 	var m := (int(secs) % 3600) / 60
 	var t := ("%d時間%d分" % [h, m]) if h > 0 else ("%d分" % m)
-	_title(_msg_box, "離れていた %s の間も採掘を続けていた\n+%s CR" % [t, GameState.fmt(gain)], 17, Color(1.0, 0.85, 0.4))
+	_title(_msg_box, "離れていた %s の間も採掘を続けていた\n+%s CR" % [t, GameState.fmt(gain)], 17, Neon.ORANGE)
 	var ok := _wide(_msg_box, "受け取る", 52, 18)
 	ok.pressed.connect(_close)
 	_msg_panel.visible = true

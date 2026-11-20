@@ -29,8 +29,9 @@ var _base_colors := PackedColorArray()
 var _dirty := false
 var _outer_t: float = 0.0
 var _glow := Color.WHITE
+var fill_color := Neon.TERRAIN_BASE  # 岩の塗り（ミニマップでも使う）
 var _t: float = 0.0
-var _cells: Sprite2D  # マス目（シェーダーで立体的に描く）
+var _cells: Sprite2D  # マス目（シェーダーで平らな塗りと輪郭線を描く）
 var _marks: Node2D  # 遺物・宝箱の目印（マス目の上に描く）
 var _shader_mat: ShaderMaterial
 
@@ -64,9 +65,12 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 	done = false
 
 	var hue := rng.randf()
-	var crust := Color.from_hsv(hue, rng.randf_range(0.35, 0.55), rng.randf_range(0.42, 0.55))
-	var mantle := Color.from_hsv(fmod(hue + rng.randf_range(0.04, 0.12), 1.0), 0.5, 0.3)
-	var deep := Color.from_hsv(fmod(hue + 0.08, 1.0), 0.6, 0.18)
+	# 岩は惑星ごとに色相だけ変えた、ごく暗い単色（例 #121A2A）
+	var base_h := Neon.TERRAIN_BASE.h
+	var crust := Color.from_hsv(fmod(base_h + (hue - 0.5) * 0.5 + 1.0, 1.0), Neon.TERRAIN_BASE.s, Neon.TERRAIN_BASE.v)
+	fill_color = crust
+	var mantle := crust
+	var deep := crust
 	_glow = Color.from_hsv(fmod(hue + 0.5, 1.0), 0.6, 1.0)
 
 	var shape := FastNoiseLite.new()
@@ -144,18 +148,17 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 	_update_outer()
 
 
-func _cell_color(b: int, dp: float, crust: Color, mantle: Color, deep: Color, rng: RandomNumberGenerator) -> Color:
-	var c: Color
+func _cell_color(b: int, _dp: float, crust: Color, _mantle: Color, _deep: Color, _rng: RandomNumberGenerator) -> Color:
+	# 遺物と宝箱は見た目では岩と区別できない（掘り当てるまで分からない）
 	if b == GameState.B.ROCK or b == GameState.B.RELIC or b == GameState.B.CACHE:
-		# 遺物と宝箱は見た目では岩と区別できない（掘り当てるまで分からない）
-		c = crust.lerp(mantle, smoothstep(0.05, 0.4, dp)).lerp(deep, smoothstep(0.45, 0.9, dp))
-	else:
-		c = GameState.BLOCK_COLORS[b]
-		c = c.darkened(0.1 + dp * 0.25)
-	c = c.darkened(rng.randf_range(0.0, 0.1))
-	# 鉱石はアルファを少し下げて目印にする（シェーダーできらめかせる）
-	if b in [GameState.B.IRON, GameState.B.COPPER, GameState.B.GOLD, GameState.B.CRYSTAL]:
-		c.a = 0.9
+		return crust
+	if b == GameState.B.HARD:
+		return crust.lightened(0.06)
+	if b == GameState.B.CORE:
+		return Color(GameState.BLOCK_COLORS[b], 1.0).darkened(0.72)
+	# 鉱石・爆発するマスは暗めの色。アルファ 0.9 を目印に、シェーダーが内側の明るい縁を描く。
+	var c: Color = (GameState.BLOCK_COLORS[b] as Color).darkened(0.62)
+	c.a = 0.9
 	return c
 
 
@@ -167,7 +170,7 @@ func _redraw_all() -> void:
 				_img.set_pixel(x, y, Color(0, 0, 0, 0))
 			else:
 				var k := 1.0 - hp[i] / max_hp[i]
-				_img.set_pixel(x, y, _base_colors[i].lerp(Color(1, 0.95, 0.85), k * 0.45))
+				_img.set_pixel(x, y, _damaged(i, k))
 	if _tex == null or _tex.get_width() != size:
 		_tex = ImageTexture.create_from_image(_img)
 	else:
@@ -177,6 +180,14 @@ func _redraw_all() -> void:
 		_cells.scale = Vector2(CELL, CELL)
 		_shader_mat.set_shader_parameter("grid", Vector2(size, size))
 	queue_redraw()
+
+
+## 削られたマスは少し明るくなる（平らな色のまま。アルファは目印なので保つ）
+func _damaged(i: int, k: float) -> Color:
+	var c := _base_colors[i]
+	var out := c.lerp(Neon.LINE, k * 0.18)
+	out.a = c.a
+	return out
 
 
 ## 保存しておいた掘った跡を戻す
@@ -488,7 +499,7 @@ func hit(i: int, damage: float) -> bool:
 			cleared.emit()
 		return true
 	var k := 1.0 - hp[i] / max_hp[i]
-	_img.set_pixel(x, y, _base_colors[i].lerp(Color(1, 0.95, 0.85), k * 0.45))
+	_img.set_pixel(x, y, _damaged(i, k))
 	_dirty = true
 	return false
 
@@ -632,27 +643,18 @@ func _process(delta: float) -> void:
 	if _dirty:
 		_dirty = false
 		_tex.update(_img)
-	_shader_mat.set_shader_parameter("time", _t)
-	queue_redraw()
 	_marks.queue_redraw()
 
 
 func _draw() -> void:
-	if _tex == null:
-		return
-	# 大気の光（マス目の後ろ）
-	var glow: Texture2D = Fx.tex("res://assets/fx/circle_05.png")
-	var gr := outer * 2.6
-	draw_texture_rect(glow, Rect2(-gr * 0.5, -gr * 0.5, gr, gr), false, Color(_glow, 0.22))
-	for k in 5:
-		draw_circle(Vector2.ZERO, outer + 6.0 + k * 10.0, Color(_glow, 0.025))
+	pass
 
 
-## 表面に出てきた遺物・宝箱は光る（透視スキャンがあれば埋まっていても見える）
+## 表面に出てきた遺物・宝箱は四角い枠で点滅する（透視スキャンがあれば埋まっていても見える）
 func _draw_marks() -> void:
 	var see_all := GameState.skill_level("vision") > 0
 	var blink := 0.5 + 0.5 * sin(_t * 5.0)
-	var star: Texture2D = Fx.tex("res://assets/fx/star_06.png")
+	var px := Fx.view_scale
 	for i in buried:
 		if hp[i] <= 0.0:
 			continue
@@ -661,9 +663,10 @@ func _draw_marks() -> void:
 			continue
 		var p := cell_center(i) - position
 		var is_relic: bool = int(block[i]) == GameState.B.RELIC
-		var col := Color(0.4, 1.0, 0.9) if is_relic else Color(1.0, 0.85, 0.3)
-		var a := (0.35 + 0.5 * blink) * (1.0 if exposed else 0.5)
-		_marks.draw_rect(Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)), Color(col, a * 0.6))
-		_marks.draw_rect(Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)), col, false, 1.0)
-		var sz := CELL * (2.0 + blink)
-		_marks.draw_texture_rect(star, Rect2(p - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), false, Color(col, a))
+		var col := Neon.CYAN if is_relic else Neon.ORANGE
+		var a := (0.5 + 0.5 * blink) * (1.0 if exposed else 0.45)
+		var r := Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)).grow(-px)
+		_marks.draw_rect(r, Color(col, 0.18 * a))
+		_marks.draw_rect(r, Color(Neon.glow(col), a * 0.4), false, px * 4.0)
+		_marks.draw_rect(r, Color(col, a), false, px * 1.5)
+		_marks.draw_line(r.position, r.end, Color(col, a * 0.8), px)
