@@ -22,6 +22,49 @@ static func additive() -> CanvasItemMaterial:
 	return _add_mat
 
 
+## 光の素材（Kenney「Particle Pack」、CC0）。白一色で、濃さだけを持つ。加算合成で重ねる。
+const HALO := "res://assets/fx/halo.png"  # 柔らかい丸い光
+const GLINT := "res://assets/fx/glint.png"  # 十字のきらめき
+const STREAK := "res://assets/fx/streak.png"  # 横に伸びる細い光
+
+
+## 光の画像を一瞬だけ置いて、広げながら消す。size は直径（ワールドの単位）。
+static func _light(parent: Node, path: String, pos: Vector2, col: Color, size: float, peak: float, dur: float, grow: float = 1.4, spin: float = 0.0) -> void:
+	var t: Texture2D = tex(path)
+	var s := Sprite2D.new()
+	s.texture = t
+	s.material = additive()
+	s.position = pos
+	s.z_index = 4
+	var k := size / float(t.get_width())
+	s.scale = Vector2(k, k)
+	s.modulate = Color(col, peak)
+	if spin != 0.0:
+		s.rotation = randf() * TAU
+	parent.add_child(s)
+	var tw := s.create_tween().set_parallel(true)
+	tw.tween_property(s, "scale", Vector2(k, k) * grow, dur).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_property(s, "modulate:a", 0.0, dur).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	if spin != 0.0:
+		tw.tween_property(s, "rotation", s.rotation + spin, dur)
+	tw.chain().tween_callback(s.queue_free)
+
+
+## にじみ：線の演出の下に敷く、柔らかい光のふくらみ（控えめ）
+static func halo(parent: Node, pos: Vector2, col: Color, radius: float, dur: float = 0.4, peak: float = 0.3) -> void:
+	_light(parent, HALO, pos, col, radius * 2.0, peak, dur, 1.5)
+
+
+## きらめき：十字の光が少し回りながら消える。大きさは画面のピクセルで決める。
+static func glint(parent: Node, pos: Vector2, col: Color, size_px: float = 26.0, dur: float = 0.5) -> void:
+	_light(parent, GLINT, pos, col, px(size_px), 0.9, dur, 0.7, 0.6)
+
+
+## 横に走る細い光（爆発や大きな出来事に）
+static func streak(parent: Node, pos: Vector2, col: Color, width: float, dur: float = 0.45) -> void:
+	_light(parent, STREAK, pos, col, width, 0.6, dur, 1.6)
+
+
 ## 画面のピクセル数をワールドの長さにする
 static func px(n: float) -> float:
 	return n * view_scale
@@ -72,7 +115,7 @@ static func sparks(parent: Node, pos: Vector2, col: Color, amount: int = 10, spe
 	_pixels(parent, pos, col, amount, speed * _k(), 2.0, 0.35, true)
 
 
-## 光の広がり：細い四角の枠が広がって消える
+## 光の広がり：細い四角の枠が広がって消える。下に柔らかい光と十字のきらめきを添える。
 static func flash(parent: Node, pos: Vector2, col: Color, radius: float, dur: float = 0.35) -> void:
 	var n := Node2D.new()
 	n.position = pos
@@ -88,6 +131,8 @@ static func flash(parent: Node, pos: Vector2, col: Color, radius: float, dur: fl
 		n.draw_rect(rect, Neon.glow(c), false, w * 4.0)
 		n.draw_rect(rect, c, false, w))
 	parent.add_child(n)
+	halo(parent, pos, col, radius * 1.5, dur * 1.2, 0.35)
+	glint(parent, pos, col.lightened(0.4), 30.0 + minf(radius / maxf(view_scale, 0.001), 80.0) * 0.5, dur * 1.6)
 	var t := n.create_tween()
 	t.tween_method(func(k: float):
 		n.set_meta("k", k)
@@ -121,11 +166,14 @@ static func ring(parent: Node, pos: Vector2, col: Color, radius: float, dur: flo
 
 
 ## 爆発：揺らぐ輪を二重にして、四角い粒を散らす。sonic は爆雷用（マゼンタ）。
+## 中心に柔らかい光のふくらみと、横に走る細い光を一瞬だけ重ねる。
 static func explosion(parent: Node, pos: Vector2, radius: float, sonic: bool = false) -> void:
 	var col := Neon.MAGENTA if sonic else Neon.ORANGE
 	ring(parent, pos, col, radius, 0.4)
 	ring(parent, pos, Color(Neon.LINE, 0.7), radius * 0.6, 0.3)
 	sparks(parent, pos, col, 14, radius * 3.0)
+	halo(parent, pos, col, radius * 0.9, 0.5, 0.35)
+	streak(parent, pos, col.lightened(0.3), radius * 3.0, 0.4)
 
 
 ## 数値ポップ：11〜13px の等幅の文字が、0.8秒ほどで上がりながら消える

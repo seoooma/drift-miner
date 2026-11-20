@@ -1,6 +1,7 @@
 extends Node
 ## 音（Autoload）。BGM のループ再生と、効果音の再生。
 ## 効果音は同じ音が短い間に重なりすぎないよう間引き、音程を少しずらして単調さを避ける。
+## BGM の下には、ごく小さな船内の低いうなり（環境音のループ）を流す。
 ## 音のオン・オフと音量は user://settings.cfg に保存する。
 
 const SETTINGS_PATH := "user://settings.cfg"
@@ -15,29 +16,32 @@ const SFX := {
 	"cache": ["res://assets/audio/cache.ogg"],
 	"relic": ["res://assets/audio/relic.ogg"],
 	"clear": ["res://assets/audio/clear.ogg"],
-	"skill": ["res://assets/audio/skill.ogg"],
+	"skill": ["res://assets/audio/skill_up.ogg"],
 	"move": ["res://assets/audio/move.ogg"],
-	"click": ["res://assets/audio/ui_click1.ogg"],
-	"buy": ["res://assets/audio/ui_switch2.ogg"],
-	"open": ["res://assets/audio/ui_switch33.ogg"],
+	"click": ["res://assets/audio/ui_select.ogg"],
+	"buy": ["res://assets/audio/ui_tick.ogg"],
+	"open": ["res://assets/audio/ui_open.ogg"],
+	"close": ["res://assets/audio/ui_close.ogg"],
 }
 ## 音ごとの音量（dB）と、次に鳴らせるまでの最短間隔（秒）
 const MIX := {
 	"break": [-14.0, 0.07], "ore_metal": [-12.0, 0.09], "ore_crystal": [-9.0, 0.09], "laser": [-20.0, 0.25],
 	"drill": [-15.0, 0.2], "bomb": [-8.0, 0.15], "blast": [-7.0, 0.2], "cache": [-6.0, 0.3],
-	"relic": [-4.0, 0.5], "clear": [-3.0, 1.0], "skill": [-8.0, 0.1], "move": [-12.0, 0.4],
-	"click": [-8.0, 0.04], "buy": [-10.0, 0.05], "open": [-10.0, 0.1],
+	"relic": [-4.0, 0.5], "clear": [-3.0, 1.0], "skill": [-9.0, 0.1], "move": [-12.0, 0.4],
+	"click": [-12.0, 0.04], "buy": [-13.0, 0.04], "open": [-11.0, 0.1], "close": [-12.0, 0.1],
 }
 const VOICES := 14
 
 var enabled := true
 var music_db := -10.0
+var hum_db := -27.0
 
 var _streams := {}
 var _last := {}
 var _voices: Array = []
 var _next_voice: int = 0
 var _bgm: AudioStreamPlayer
+var _hum: AudioStreamPlayer
 var _jingle_t: float = 0.0
 
 
@@ -61,6 +65,12 @@ func _ready() -> void:
 	_bgm.stream = music
 	_bgm.volume_db = music_db
 	add_child(_bgm)
+	_hum = AudioStreamPlayer.new()
+	var hum: AudioStreamOggVorbis = load("res://assets/audio/ambient_hum.ogg")
+	hum.loop = true
+	_hum.stream = hum
+	_hum.volume_db = hum_db
+	add_child(_hum)
 	_apply()
 
 
@@ -75,6 +85,8 @@ func _apply() -> void:
 	AudioServer.set_bus_mute(0, not enabled)
 	if not _bgm.playing:
 		_bgm.play()
+	if not _hum.playing:
+		_hum.play()
 
 
 func set_enabled(on: bool) -> void:

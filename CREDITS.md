@@ -4,15 +4,30 @@
 商用・非商用を問わず自由に使え、クレジットの表記は必須ではありませんが、感謝を込めて記載します。
 CC0 の全文は [`assets/LICENSE-CC0-1.0.txt`](assets/LICENSE-CC0-1.0.txt) にあります。
 
-画像の素材は使っていません。見た目（機体・アイコン・地形・演出・UI）はすべてコードで線と単色の図形として描いています（下の「自作」）。
+見た目（機体・アイコン・地形・UI）はコードで線と単色の図形として描いています（下の「自作」）。
+画像の素材は、演出に重ねる白い光の画像3枚だけです（下の「光の画像」）。
 
 ## 効果音（Kenney / www.kenney.nl、CC0）
 
 | 使い道 | ファイル | 元の素材 |
 | --- | --- | --- |
 | ブロックを砕く音、鉱石の音、宝箱 | `break_*.ogg`、`ore_*.ogg`、`cache.ogg` | Impact Sounds |
-| レーザー、ドリル、爆雷、爆発、スキル習得、移動 | `laser.ogg`、`drill.ogg`、`bomb.ogg`、`blast.ogg`、`skill.ogg`、`move.ogg` | Sci-Fi Sounds |
-| ボタン操作 | `ui_*.ogg` | UI Audio |
+| レーザー、ドリル、爆雷、爆発、移動 | `laser.ogg`、`drill.ogg`、`bomb.ogg`、`blast.ogg`、`move.ogg` | Sci-Fi Sounds |
+| ボタン操作（選ぶ・購入・開く・閉じる） | `ui_select.ogg`、`ui_tick.ogg`、`ui_open.ogg`、`ui_close.ogg` | Interface Sounds（`select_001`、`tick_002`、`maximize_003`、`minimize_003`） |
+| スキル習得 | `skill_up.ogg` | Digital Audio（`powerUp2`、mp3 から ogg に変換） |
+| 船内の低いうなり（環境音のループ） | `ambient_hum.ogg` | Sci-Fi Sounds（`spaceEngineLow_001` を、継ぎ目なくループするようにつなぎ直したもの） |
+
+Interface Sounds・Digital Audio・Sci-Fi Sounds は OpenGameArt.org で Kenney が CC0 で公開しているもの（kenney_interfaceSounds.zip、Digital_SFX_Set.zip、sci-fi_sounds.zip）から取得しました。
+
+## 光の画像（Kenney「Particle Pack」/ www.kenney.nl、CC0）
+
+白一色・濃さだけの画像にして、加算合成で重ねています（`assets/fx/`）。OpenGameArt.org の kenney_particlePack.zip から取得し、縮小しました。
+
+| 使い道 | ファイル | 元の画像 |
+| --- | --- | --- |
+| 光の広がり・爆発の下に敷く柔らかい光 | `halo.png` | `circle_05` |
+| 鉱石・遺物のきらめき、背景の星のきらめき | `glint.png` | `star_07` |
+| 爆発で横に走る細い光 | `streak.png` | `flare_01` |
 
 ## 音楽
 
@@ -37,3 +52,4 @@ CC0 の全文は [`assets/LICENSE-CC0-1.0.txt`](assets/LICENSE-CC0-1.0.txt) に�
 見た目の決まりごと（色・線の太さ・にじみ）は `scripts/neon.gd` に一か所でまとめています。
 機体とボタンの線のアイコン、惑星の平らな塗りと階段状の輪郭線（`shaders/cells.gdshader`）、背景の方眼と星、
 揺らぐ輪・四角い粒・ビームなどの演出、スキルマップは、すべてコードで描いています。
+画面全体のごく弱い走査線と周辺減光（`shaders/screen.gdshader`）も自作です。
