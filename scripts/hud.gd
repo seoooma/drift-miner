@@ -34,6 +34,7 @@ var _map_zoom: float = 0.8
 var _msg_panel: PanelContainer
 var _msg_box: VBoxContainer
 var _top_h: float = 112.0
+var _respec_arm: bool = false  # 振り直しボタンを1回押した（もう一度で実行）
 
 
 func _ready() -> void:
@@ -574,7 +575,9 @@ func _process(delta: float) -> void:
 	if main != null:
 		var p: Planet = main.planet
 		var t := int(gs.planet_time)
-		_planet_label.text = "[right]惑星 %d：%s\n[color=#%s]掘削 %.1f%%[/color]\n経過 %d:%02d[/right]" % [gs.planet, gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), t / 60, t % 60]
+		var pt := int(gs.prev_time)
+		var prev := ("／前回 %d:%02d" % [pt / 60, pt % 60]) if pt > 0 else ""
+		_planet_label.text = "[right]惑星 %d：%s\n[color=#%s]掘削 %.1f%%[/color]\n経過 %d:%02d%s[/right]" % [gs.planet, gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), t / 60, t % 60, prev]
 	_dot_t -= delta
 	if _dot_t <= 0.0:
 		_dot_t = 0.5
@@ -624,6 +627,51 @@ func _draw_overlay() -> void:
 		_overlay.draw_rect(fr.grow(2.0), Color(Neon.glow(Neon.ORANGE), 0.25))
 		_overlay.draw_rect(fr, Neon.ORANGE)
 	_draw_minimap(p)
+	_draw_heading_arrow()
+
+
+## 行き先が画面の外にあるとき、惑星エリアの端にその向きの三角と距離（マス）を出す。
+## 指定した移動先は緑、自動で向かう先はシアン。
+func _draw_heading_arrow() -> void:
+	if any_panel():
+		return
+	var h: Dictionary = main.heading()
+	if h.is_empty():
+		return
+	var area := planet_area()
+	var sp: Vector2 = main.get_canvas_transform() * (h["pos"] as Vector2)
+	var inner := area.grow(-26.0)
+	if inner.has_point(sp):
+		return
+	var c := inner.get_center()
+	var d := sp - c
+	if d.length() < 1.0:
+		return
+	# 中心から行き先への線が、内側の枠とぶつかる点
+	var k := minf(absf(inner.size.x * 0.5 / d.x) if absf(d.x) > 0.001 else INF, absf(inner.size.y * 0.5 / d.y) if absf(d.y) > 0.001 else INF)
+	var p := c + d * k
+	# 右上の地図とは重ならないようにする
+	var mm := Rect2(area.end.x - 104.0, area.position.y, 104.0, 104.0)
+	if mm.has_point(p):
+		p = Vector2(minf(p.x, mm.position.x - 4.0), maxf(p.y, mm.end.y + 4.0))
+	# 左のボタンとも重ならないようにする
+	var sb := Rect2(_side.position, _side.size).grow(8.0)
+	if sb.has_point(p):
+		p.x = sb.end.x + 12.0
+	var col := Neon.LIME if bool(h["manual"]) else Neon.CYAN
+	var dir := d.normalized()
+	var side := dir.orthogonal()
+	var tri := PackedVector2Array([p + dir * 9.0, p - dir * 5.0 + side * 7.0, p - dir * 5.0 - side * 7.0, p + dir * 9.0])
+	_overlay.draw_colored_polygon(tri, Color(col, 0.18))
+	_overlay.draw_polyline(tri, Neon.glow(col), 5.0)
+	_overlay.draw_polyline(tri, col, 1.5)
+	var cells := int(round(((h["pos"] as Vector2) - main.focus).length() / Planet.CELL))
+	var txt := "%d" % cells
+	var f := Neon.font()
+	var tw := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var tp := p - dir * 20.0 + Vector2(-tw * 0.5, 4.0)
+	_overlay.draw_string(f, tp + Vector2(1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Neon.SHADOW)
+	_overlay.draw_string(f, tp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
 
 
 ## 惑星エリアの右上に、四角い枠の小さな地図。惑星の地形（掘った跡も映る）と、
@@ -658,6 +706,7 @@ func _draw_minimap(p: Planet) -> void:
 
 func _open_tree() -> void:
 	Audio.play("open")
+	_respec_arm = false
 	get_tree().paused = true
 	var sk := GameState.skill_def(_tree_sel)
 	if not sk.is_empty():
@@ -746,7 +795,10 @@ func _build_tree() -> void:
 	dv.add_theme_constant_override("separation", 4)
 	detail.add_child(dv)
 	var dt := Label.new()
-	dt.text = "%s　Lv %d/%d" % [sel["name"], gs.skill_level(sid), int(sel["max"])]
+	if gs.is_key(sid):
+		dt.text = "要石：%s" % sel["name"]
+	else:
+		dt.text = "%s　Lv %d/%d" % [sel["name"], gs.skill_level(sid), int(sel["max"])]
 	dt.add_theme_font_size_override("font_size", 17)
 	dv.add_child(dt)
 	var dd := Label.new()
@@ -762,28 +814,41 @@ func _build_tree() -> void:
 	dc.scroll_active = false
 	dc.add_theme_font_size_override("normal_font_size", 14)
 	dc.custom_minimum_size = Vector2(side_w - 24.0, 0)
-	if gs.skill_maxed(sid):
+	var key_note := ""
+	if gs.is_key(sid):
+		key_note = "\n[color=#7C828C]要石は1つだけ付けられる。外すと素材は全額戻る[/color]"
+	if gs.is_key(sid) and gs.has_key(sid):
+		dc.text = "[color=#9BE86A]装着中[/color]" + key_note
+	elif gs.skill_maxed(sid):
 		dc.text = "[color=#9BE86A]最大レベル[/color]"
+	elif not gs.tier_ok(sid):
+		dc.text = "[color=#E8504A]惑星 %d に着くと解放（これまでの最高：惑星 %d）[/color]" % [gs.tier_planet(sid), gs.best_planet]
+	elif gs.is_key(sid) and gs.active_key() != "":
+		dc.text = ("[color=#E8504A]要石「%s」を外すと付けられる[/color]" % gs.skill_def(gs.active_key())["name"]) + key_note
 	elif not gs.skill_open(sid):
 		var names: PackedStringArray = []
 		for l in gs.skill_links(sid):
 			names.append(String(gs.skill_def(String(l))["name"]))
 		dc.text = "[color=#E8504A]つながっているスキル（%s）のどれかを先に習得[/color]" % "・".join(names)
 	else:
-		dc.text = "必要：" + _mat_bb(gs.skill_cost(sid), true)
+		dc.text = "必要：" + _mat_bb(gs.skill_cost(sid), true) + key_note
 	dv.add_child(dc)
 
 	var row: BoxContainer = VBoxContainer.new() if wide else HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	side.add_child(row)
 	var bw := side_w if wide else (side_w - 12.0) / 3.0
-	var buy := _button("強化", Vector2(bw, 48), 17)
-	buy.disabled = not gs.can_buy_skill(sid)
+	var removing := gs.is_key(sid) and gs.has_key(sid)
+	var buy := _button("外す" if removing else ("付ける" if gs.is_key(sid) else "強化"), Vector2(bw, 48), 17)
+	buy.disabled = not removing and not gs.can_buy_skill(sid)
 	buy.pressed.connect(func():
-		if gs.buy_skill(sid):
+		if removing:
+			gs.remove_key(sid)
+			toast("要石を外した。素材は全額戻った")
+		elif gs.buy_skill(sid):
 			Audio.play("skill")
-			_keep_map()
-			_build_tree())
+		_keep_map()
+		_build_tree())
 	row.add_child(buy)
 	var all := _button("まとめて強化", Vector2(bw, 48), 15)
 	all.pressed.connect(func():
@@ -795,6 +860,23 @@ func _build_tree() -> void:
 	var close := _button("閉じる", Vector2(bw, 48), 17)
 	close.pressed.connect(_close)
 	row.add_child(close)
+	# 振り直し：惑星を割るたびに1回。押し間違えないよう、2回押して実行する
+	var re := _button("", Vector2(side_w, 40), 13)
+	re.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if gs.respec_ready:
+		re.text = "もう一度押すと全スキルを外す" if _respec_arm else "全スキルを振り直す（素材は全額戻る）"
+	else:
+		re.text = "振り直しは惑星を割ると1回使える"
+		re.disabled = true
+	re.pressed.connect(func():
+		if not _respec_arm:
+			_respec_arm = true
+		elif gs.respec():
+			_respec_arm = false
+			toast("スキルを振り直した。素材は全額戻った")
+		_keep_map()
+		_build_tree())
+	side.add_child(re)
 
 
 # ---------------------------------------------------------------- 遺物・惑星クリア・放置報酬
@@ -828,7 +910,11 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	var gs := GameState
 	var t := int(gs.planet_time)
 	_title(_msg_box, "惑星 %d を破壊した！" % gs.planet, 24, Neon.LIME)
-	_title(_msg_box, "所要時間 %d分%02d秒・遺物 %d個" % [t / 60, t % 60, gs.relics.size()], 15, Color(1, 1, 1, 0.75))
+	var cmp := ""
+	if gs.compare_time > 0.0:
+		var dt := int(gs.planet_time - gs.compare_time)
+		cmp = "（前の惑星より %d分%02d秒 %s）" % [absi(dt) / 60, absi(dt) % 60, "遅い" if dt > 0 else "速い"]
+	_title(_msg_box, "所要時間 %d分%02d秒%s・遺物 %d個" % [t / 60, t % 60, cmp, gs.relics.size()], 15, Color(1, 1, 1, 0.75))
 	var got := RichTextLabel.new()
 	got.bbcode_enabled = true
 	got.fit_content = true
@@ -837,7 +923,7 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	got.custom_minimum_size = Vector2(_panel_w() - 24.0, 0)
 	got.text = "[center]この惑星で集めた素材\n%s%s[/center]" % [_mat_bb(gs.mats_this_planet, false), ("\n核の回収ボーナス " + _mat_bb(extra, false)) if not extra.is_empty() else ""]
 	_msg_box.add_child(got)
-	_title(_msg_box, "クレジットとツールは次の惑星でリセット。素材とスキルは残る", 13, Color(1, 1, 1, 0.6))
+	_title(_msg_box, "クレジット・ツール・遺物は次の惑星でリセット。素材とスキルは残る", 13, Color(1, 1, 1, 0.6))
 	_title(_msg_box, "次の惑星（ずっと硬くなる）" if next.size() == 1 else "次の惑星を選ぶ", 17)
 	for tid in next:
 		var tr := gs.trait_def(String(tid))

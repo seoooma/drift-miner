@@ -9,6 +9,7 @@ signal cleared
 
 const CELL := 8.0
 const RADIUS := 56
+const DEPTH_W := 40.0  # 狙う点数で、深さをどれだけ嫌うか（大きいほど表面を広く削る）
 
 var radius_cells: int = RADIUS
 var size: int = 0
@@ -600,12 +601,17 @@ func targets_near(p: Vector2, r: int, dist_w: float = 1.0) -> Array:
 			var d := Vector2(x - cx, y - cy).length()
 			if d > r:
 				continue
-			scored.append([priority(i) * 3.0 - d * dist_w - depth[i] * 80.0, i])
+			scored.append([priority(i) * 3.0 - d * dist_w - depth[i] * DEPTH_W, i])
 	scored.sort_custom(func(a, b): return a[0] > b[0])
 	var out: Array = []
 	for e in scored:
 		out.append(e[1])
 	return out
+
+
+## マス i の「狙う点数」（targets_near と同じ式）。p から近く、価値が高く、浅いほど高い。
+func score(i: int, p: Vector2, dist_w: float = 1.0) -> float:
+	return priority(i) * 3.0 - cell_center(i).distance_to(p) / CELL * dist_w - depth[i] * DEPTH_W
 
 
 ## 惑星の中心から外向きの向き（そのマスの「空」の方向）

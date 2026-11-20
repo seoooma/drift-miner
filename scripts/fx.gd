@@ -143,3 +143,42 @@ static func popup(parent: Node, pos: Vector2, text: String, col: Color) -> void:
 	t.tween_property(l, "position:y", l.position.y - 26.0 * k, 0.8).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 	t.tween_property(l, "modulate:a", 0.0, 0.35).set_delay(0.45)
 	t.chain().tween_callback(l.queue_free)
+
+
+## 回収：小さな四角い粒が、ゆるい弧を描いて target（母艦の位置を返す関数）へ吸い込まれる。
+## 着いたら on_arrive を呼ぶ（母艦を一瞬光らせる）。
+static func absorb(parent: Node, from: Vector2, target: Callable, col: Color, amount: int, on_arrive: Callable = Callable()) -> void:
+	var n := Node2D.new()
+	n.material = additive()
+	n.z_index = 6
+	var seeds: Array = []
+	for i in amount:
+		seeds.append([Vector2.from_angle(randf() * TAU) * randf_range(2.0, 6.0), randf_range(-1.0, 1.0), randf_range(0.0, 0.25)])
+	var dur := 0.7
+	var s := px(2.5)
+	n.set_meta("k", 0.0)
+	n.draw.connect(func():
+		var k: float = n.get_meta("k")
+		var to: Vector2 = target.call()
+		if to == Vector2.INF:
+			return
+		for sd in seeds:
+			var kk := clampf((k - float(sd[2])) / (1.0 - float(sd[2])), 0.0, 1.0)
+			if kk <= 0.0 or kk >= 1.0:
+				continue
+			var a: Vector2 = from + (sd[0] as Vector2)
+			var side := (to - a).orthogonal().normalized() * a.distance_to(to) * 0.25 * float(sd[1])
+			var e := ease(kk, 2.4)
+			var p := a.lerp(to, e) + side * sin(e * PI)
+			var c := Color(col, 0.9 * (1.0 - kk * 0.4))
+			n.draw_rect(Rect2(p - Vector2(s, s) * 1.5, Vector2(s, s) * 3.0), Neon.glow(c))
+			n.draw_rect(Rect2(p - Vector2(s, s) * 0.5, Vector2(s, s)), c))
+	parent.add_child(n)
+	var t := n.create_tween()
+	t.tween_method(func(k: float):
+		n.set_meta("k", k)
+		n.queue_redraw(), 0.0, 1.0, dur)
+	t.tween_callback(func():
+		if on_arrive.is_valid():
+			on_arrive.call()
+		n.queue_free())
