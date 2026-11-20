@@ -10,6 +10,10 @@ signal cleared
 const CELL := 8.0
 const RADIUS := 56
 const DEPTH_W := 40.0  # 狙う点数で、深さをどれだけ嫌うか（大きいほど表面を広く削る）
+const FIRST_RADIUS := 38  # 最初の惑星だけ小さくして、ループ全体を早めに見せる
+const WIDEN_K := 0.2  # 特性で鉱石が増えるとき、鉱脈の境目をずらす強さ
+## 鉱石の塗りの暗さ（darkened の量）。価値の順に明るくする
+const ORE_DARK := {1: 0.74, 2: 0.6, 3: 0.46, 4: 0.36, 8: 0.6}
 
 var radius_cells: int = RADIUS
 var size: int = 0
@@ -35,6 +39,13 @@ var _t: float = 0.0
 var _cells: Sprite2D  # マス目（シェーダーで平らな塗りと輪郭線を描く）
 var _marks: Node2D  # 遺物・宝箱の目印（マス目の上に描く）
 var _shader_mat: ShaderMaterial
+var _dealt: float = 0.0  # 直近に与えたダメージ（残り時間の見込みに使う）
+var _rate_t: float = 0.0
+var damage_rate: float = 0.0  # 実際に岩に入っている毎秒のダメージ（ならした値）
+var _rem_t: float = 0.0
+var remaining_hp: float = 0.0  # クリアまでに削る必要のある耐久の合計（2秒ごとに計算）
+var cleared_hp: float = 0.0  # これまでに削った耐久（クリアに必要な分のうち）
+var _need_total: float = 0.0  # クリアに必要な耐久の合計（作ったときの値）
 
 
 func _ready() -> void:
@@ -53,7 +64,7 @@ func _ready() -> void:
 func generate(seed_value: int, trait_rates: Dictionary) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
-	radius_cells = RADIUS
+	radius_cells = FIRST_RADIUS if GameState.planet == 1 else RADIUS
 	size = radius_cells * 2 + 1
 	var n := size * size
 	hp.resize(n)
@@ -64,11 +75,17 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 	buried.clear()
 	alive_count = 0
 	done = false
+	_need_total = 0.0
+	remaining_hp = 0.0
+	damage_rate = 0.0
+	_dealt = 0.0
+	_rem_t = 0.0
 
 	var hue := rng.randf()
 	# 岩は惑星ごとに色相だけ変えた、ごく暗い単色（例 #121A2A）
 	var base_h := Neon.TERRAIN_BASE.h
-	var crust := Color.from_hsv(fmod(base_h + (hue - 0.5) * 0.5 + 1.0, 1.0), Neon.TERRAIN_BASE.s, Neon.TERRAIN_BASE.v)
+	# 岩の色相は青〜青緑〜灰の狭い範囲に収め、鉱石の色（橙・黄・紫）と重ならないようにする
+	var crust := Color.from_hsv(fmod(base_h + (hue - 0.5) * 0.16 + 1.0, 1.0), Neon.TERRAIN_BASE.s, Neon.TERRAIN_BASE.v)
 	fill_color = crust
 	var mantle := crust
 	var deep := crust
@@ -115,21 +132,25 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 			var v := veins.get_noise_2d(x, y)
 			var v2 := veins2.get_noise_2d(x, y)
 			var roll := rng.randf()
+			# 遺物・宝箱・爆薬岩は確率を積み上げて判定する（どれかが増えても、ほかが減らない）
+			var p_relic := 0.0012 * r_relic * (0.5 + dp)
+			var p_cache := 0.0035 * r_cache
+			var p_vol := 0.006 * r_vol
 			if dp > 0.9:
 				b = GameState.B.CORE
-			elif roll < 0.0012 * r_relic * (0.5 + dp):
+			elif roll < p_relic:
 				b = GameState.B.RELIC
-			elif roll < 0.0012 * r_relic * (0.5 + dp) + 0.0035 * r_cache:
+			elif roll < p_relic + p_cache:
 				b = GameState.B.CACHE
-			elif roll < 0.006 * r_vol + 0.0047:
+			elif roll < p_relic + p_cache + p_vol:
 				b = GameState.B.VOLATILE
-			elif v > 0.42 and dp > 0.35 and rng.randf() < 0.5 * r_cr:
+			elif v > 0.42 - _widen(0.5, r_cr) and dp > 0.35 and rng.randf() < 0.5 * r_cr:
 				b = GameState.B.CRYSTAL
-			elif v2 > 0.38 and rng.randf() < 0.55 * r_au * (0.4 + dp):
+			elif v2 > 0.38 - _widen(0.55, r_au) and rng.randf() < 0.55 * r_au * (0.4 + dp):
 				b = GameState.B.GOLD
-			elif v > 0.2 and rng.randf() < 0.6 * r_cu:
+			elif v > 0.2 - _widen(0.6, r_cu) and rng.randf() < 0.6 * r_cu:
 				b = GameState.B.COPPER
-			elif v2 < -0.25 and rng.randf() < 0.7 * r_iron:
+			elif v2 < -0.25 + _widen(0.7, r_iron) and rng.randf() < 0.7 * r_iron:
 				b = GameState.B.IRON
 			elif hard.get_noise_2d(x, y) > 0.45 - 0.1 * (r_hard - 1.0) and dp > 0.1:
 				b = GameState.B.HARD
@@ -149,6 +170,14 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 	_update_outer()
 
 
+## 鉱脈の出やすさを上げる特性で、確率が1を超えて頭打ちになる分を、鉱脈の広さで補う。
+## p はもとの確率、r は倍率。p*r が1を超えるときだけ、鉱脈の境目をずらす量を返す。
+func _widen(p: float, r: float) -> float:
+	if p * r <= 1.0:
+		return 0.0
+	return WIDEN_K * (p * r - 1.0)
+
+
 func _cell_color(b: int, _dp: float, crust: Color, _mantle: Color, _deep: Color, _rng: RandomNumberGenerator) -> Color:
 	# 遺物と宝箱は見た目では岩と区別できない（掘り当てるまで分からない）
 	if b == GameState.B.ROCK or b == GameState.B.RELIC or b == GameState.B.CACHE:
@@ -158,7 +187,8 @@ func _cell_color(b: int, _dp: float, crust: Color, _mantle: Color, _deep: Color,
 	if b == GameState.B.CORE:
 		return Color(GameState.BLOCK_COLORS[b], 1.0).darkened(0.72)
 	# 鉱石・爆発するマスは暗めの色。アルファ 0.9 を目印に、シェーダーが内側の明るい縁を描く。
-	var c: Color = (GameState.BLOCK_COLORS[b] as Color).darkened(0.62)
+	# 価値の高い鉱石ほど明るくして、目が先に行くようにする（鉄が一番暗く、結晶が一番明るい）。
+	var c: Color = (GameState.BLOCK_COLORS[b] as Color).darkened(ORE_DARK.get(b, 0.62))
 	c.a = 0.9
 	return c
 
@@ -207,6 +237,8 @@ func restore(saved: PackedFloat32Array) -> void:
 		if hp[i] > 0.0:
 			still.append(i)
 	buried = still
+	done = broken() >= needed()
+	_rem_t = 0.0
 	_redraw_all()
 	_rebuild_air()
 	_update_outer()
@@ -481,6 +513,7 @@ func random_surface_cell() -> int:
 func hit(i: int, damage: float) -> bool:
 	if not is_alive(i) or done:
 		return false
+	_dealt += minf(damage, hp[i])
 	hp[i] -= damage
 	var x := i % size
 	var y := i / size
@@ -628,6 +661,50 @@ func remaining_value() -> float:
 	return s
 
 
+## クリアまでに削る必要のある耐久。残りのマスのうち、柔らかい順に必要な数だけ足す
+## （一番硬い5%は掘らなくてよい）。
+func _update_remaining() -> void:
+	var left := needed() - broken()
+	if left <= 0:
+		remaining_hp = 0.0
+		return
+	var arr := PackedFloat32Array()
+	var full := 0.0
+	for i in hp.size():
+		if max_hp[i] > 0.0:
+			if hp[i] > 0.0:
+				arr.append(hp[i])
+	arr.sort()
+	var s := 0.0
+	for k in mini(left, arr.size()):
+		s += arr[k]
+	remaining_hp = s
+	if _need_total <= 0.0:
+		var all := PackedFloat32Array()
+		for i in max_hp.size():
+			if max_hp[i] > 0.0:
+				all.append(max_hp[i])
+		all.sort()
+		for k in mini(needed(), all.size()):
+			full += all[k]
+		_need_total = full
+	cleared_hp = maxf(0.0, _need_total - remaining_hp)
+
+
+## 耐久で見た進み具合（0〜1）
+func hp_progress() -> float:
+	if _need_total <= 0.0:
+		return 0.0
+	return clampf(1.0 - remaining_hp / _need_total, 0.0, 1.0)
+
+
+## 今のペースのままなら、あと何秒で割れるか（分からなければ -1）
+func eta() -> float:
+	if damage_rate <= 0.0 or remaining_hp <= 0.0:
+		return -1.0
+	return remaining_hp / damage_rate
+
+
 func _update_outer() -> void:
 	var best := 0.0
 	for i in hp.size():
@@ -642,6 +719,16 @@ func _update_outer() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	_rate_t += delta
+	if _rate_t >= 1.0:
+		var r := _dealt / _rate_t
+		damage_rate = r if damage_rate <= 0.0 else lerpf(damage_rate, r, 0.25)
+		_dealt = 0.0
+		_rate_t = 0.0
+	_rem_t -= delta
+	if _rem_t <= 0.0:
+		_rem_t = 2.0
+		_update_remaining()
 	_outer_t -= delta
 	if _outer_t <= 0.0:
 		_outer_t = 1.0

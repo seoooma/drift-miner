@@ -1,5 +1,5 @@
 extends CanvasLayer
-## 画面表示。上：素材・クレジット・惑星の進み具合。中：惑星（タップで手掘り）。
+## 画面表示。上：素材・クレジット・惑星の進み具合。中：惑星（タップで母艦の移動先を決める）。
 ## 下（横持ちでは右）：採掘ツールの一覧。パネル：スキルツリー、遺物、惑星クリア、放置報酬。
 
 const BUY_MODES := [1, 10, 0]  # 0 = 買えるだけ
@@ -22,6 +22,10 @@ var _dot_t: float = 0.0
 var _tool_panel: PanelContainer
 var _tool_rows := {}
 var _buy_btn: Button
+var _auto_btn: Button
+var _goal: Label
+var _goal_kind: String = ""
+var _pulse_t: float = 0.0
 var _buy_mode: int = 0
 var _panels: Array = []
 var _backdrops: Array = []
@@ -90,6 +94,16 @@ func _ready() -> void:
 		sb.set_content_margin_all(10)
 		(pair[0] as Label).add_theme_stylebox_override("normal", sb)
 		(pair[0] as Label).modulate.a = 0.0
+
+	# 次の目標：惑星エリアの上端に1行
+	_goal = _make_label(14)
+	_goal.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_goal.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	var gsb := _box(Color(0, 0, 0, 0.8), Color(Neon.LIME, 0.0), 0)
+	gsb.content_margin_top = 5
+	gsb.content_margin_bottom = 5
+	_goal.add_theme_stylebox_override("normal", gsb)
+	_goal.add_theme_color_override("font_color", Neon.LIME)
 
 	_tree_panel = _make_panel()
 	_tree_box = _panel_box(_tree_panel)
@@ -181,7 +195,7 @@ func _button(text: String, min_size: Vector2, font_size: int) -> Button:
 ## 左に並ぶ四角いボタン（約44px）。名前は小さく下に添える。右上の赤い点はお知らせ。
 func _icon_button(icon: String, label: String, accent: Color) -> Button:
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(46, 46)
+	b.custom_minimum_size = Vector2(48, 48)
 	b.focus_mode = Control.FOCUS_NONE
 	b.flat = true
 	for st in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
@@ -198,14 +212,17 @@ func _icon_button(icon: String, label: String, accent: Color) -> Button:
 		b.draw_rect(r.grow(-1.0), accent, false, 2.0)
 		Neon.icon(b, String(b.get_meta("icon")), r.get_center(), 24.0, Neon.LINE, 1.5)
 		if bool(b.get_meta("dot")):
-			b.draw_circle(Vector2(b.size.x - 1.0, 1.0), 4.5, Neon.RED))
+			b.draw_circle(Vector2(b.size.x - 1.0, 1.0), 4.5, Neon.RED)
+		if bool(b.get_meta("pulse", false)):
+			var k := 0.5 + 0.5 * sin(_pulse_t * 6.0)
+			b.draw_rect(r.grow(2.0 + 3.0 * k), Color(Neon.LIME, 0.9 - 0.6 * k), false, 2.0))
 	b.button_down.connect(b.queue_redraw)
 	b.button_up.connect(b.queue_redraw)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	box.add_child(b)
 	var l := Label.new()
-	Neon.plain_text(l, 10, Neon.MUTED)
+	Neon.plain_text(l, 11, Neon.LINE)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.text = label
 	box.add_child(l)
@@ -343,7 +360,13 @@ func _build_tool_panel() -> void:
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	t.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(t)
-	_buy_btn = _button("", Vector2(104, 44), 13)
+	_auto_btn = _button("", Vector2(96, 44), 13)
+	_auto_btn.pressed.connect(func():
+		GameState.auto_on = not GameState.auto_on
+		GameState.mark_tip("buy")
+		toast("自動強化 ON：一番安いツールを自動で強化する" if GameState.auto_on else "自動強化 OFF"))
+	head.add_child(_auto_btn)
+	_buy_btn = _button("", Vector2(120, 44), 13)
 	_buy_btn.pressed.connect(func(): _buy_mode = (_buy_mode + 1) % BUY_MODES.size())
 	head.add_child(_buy_btn)
 	var scroll := ScrollContainer.new()
@@ -396,10 +419,10 @@ func _build_tool_panel() -> void:
 		mid.add_theme_constant_override("separation", 8)
 		info.add_child(mid)
 		var lv := Label.new()
-		Neon.plain_text(lv, 12, Neon.MUTED)
+		Neon.plain_text(lv, 13, Neon.MUTED)
 		mid.add_child(lv)
 		var sub := Label.new()
-		Neon.plain_text(sub, 11, Neon.MUTED)
+		Neon.plain_text(sub, 12, Neon.MUTED)
 		sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sub.clip_text = true
 		sub.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -448,7 +471,14 @@ func _cost_button() -> Button:
 		var lines: Array = b.get_meta("lines")
 		var w := b.size.x
 		var y := 15.0
-		var specs := [[String(lines[0]), 10, Neon.MUTED], [String(lines[1]), 15, Neon.TEXT], [String(lines[2]), 11, Neon.TEXT]]
+		# 買えるときは枠がゆっくり光る（押せることが分かるように）
+		if not b.disabled and bool(b.get_meta("glow", false)):
+			var k := 0.5 + 0.5 * sin(_pulse_t * 4.0)
+			var rr := Rect2(Vector2.ZERO, b.size).grow(-1.0)
+			b.draw_rect(rr, Color(Neon.CYAN, 0.06 + 0.08 * k))
+			b.draw_rect(rr, Neon.glow(Neon.CYAN), false, 4.0)
+			b.draw_rect(rr, Color(Neon.CYAN, 0.6 + 0.4 * k), false, 1.5)
+		var specs := [[String(lines[0]), 11, Neon.MUTED], [String(lines[1]), 15, Neon.TEXT], [String(lines[2]), 11, Neon.TEXT]]
 		for sp in specs:
 			var txt: String = sp[0]
 			if txt != "":
@@ -456,16 +486,19 @@ func _cost_button() -> Button:
 				var tw := f.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 				b.draw_string(f, Vector2((w - tw) * 0.5 + 1.0, y + 1.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Neon.SHADOW)
 				b.draw_string(f, Vector2((w - tw) * 0.5, y), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, sp[2])
-			y += 17.0 if sp[1] != 10 else 16.0)
+			y += 17.0 if sp[1] != 11 else 16.0)
 	return b
 
 
-func _set_cost(b: Button, verb: String, cost: String, unit: String, enabled: bool) -> void:
+func _set_cost(b: Button, verb: String, cost: String, unit: String, enabled: bool, glow: bool = false) -> void:
 	var lines: Array = [verb, cost, unit]
-	if lines != b.get_meta("lines") or b.disabled == enabled:
+	if lines != b.get_meta("lines") or b.disabled == enabled or glow != bool(b.get_meta("glow", false)):
 		b.set_meta("lines", lines)
+		b.set_meta("glow", glow)
 		b.disabled = not enabled
 		b.modulate.a = 1.0 if enabled else 0.4
+		b.queue_redraw()
+	elif glow:
 		b.queue_redraw()
 
 
@@ -482,6 +515,7 @@ func _on_buy(id: String) -> void:
 		_open_tree()
 		return
 	if GameState.buy_tool(id, _buy_count(id)):
+		GameState.mark_tip("buy")
 		Audio.play("buy", 0.0, 0.15)
 		var row: PanelContainer = _tool_rows[id]["row"]
 		var tw := row.create_tween()
@@ -492,34 +526,82 @@ func _on_buy(id: String) -> void:
 func _update_tools() -> void:
 	var gs := GameState
 	var mode: int = BUY_MODES[_buy_mode]
-	_buy_btn.text = "購入 ×%d" % mode if mode > 0 else "購入 最大"
+	_buy_btn.text = "まとめ買い ×%d" % mode if mode > 0 else "まとめ買い 最大"
+	_auto_btn.text = "自動 ON" if gs.auto_on else "自動 OFF"
+	_auto_btn.modulate = Color(Neon.LIME, 1.0) if gs.auto_on else Color.WHITE
+	# 未解放のツールは、次に解放するもの1つだけ見せる
+	var shown_locked := false
 	for td in gs.TOOLS:
 		var id := String(td["id"])
 		var r: Dictionary = _tool_rows[id]
 		var btn: Button = r["btn"]
 		var lv := gs.tool_level(id)
-		if not gs.tool_unlocked(id):
+		var locked := not gs.tool_unlocked(id)
+		(r["row"] as PanelContainer).visible = not locked or not shown_locked
+		if locked:
+			shown_locked = true
+		if locked:
 			(r["name"] as Label).text = String(td["name"])
 			(r["dps"] as Label).text = ""
 			(r["lv"] as Label).text = ""
-			(r["sub"] as Label).text = "スキルマップで解放（%s）" % gs.cost_text(gs.skill_cost(id))
-			_set_cost(btn, "", "未解放", "マップへ", true)
-			(r["row"] as PanelContainer).modulate.a = 0.5
+			(r["sub"] as Label).text = "次の解放：スキルマップで（%s）" % _have_need(gs.skill_cost(id))
+			_set_cost(btn, "", "未解放", "マップへ", true, gs.can_buy_skill(id))
+			(r["row"] as PanelContainer).modulate.a = 1.0 if gs.can_buy_skill(id) else 0.6
 			continue
 		var n := _buy_count(id)
 		var cost := gs.upgrade_cost(id, n)
 		(r["name"] as Label).text = String(td["name"])
 		(r["lv"] as Label).text = "Lv. %d" % lv
-		(r["dps"] as Label).text = "毎秒 %s" % gs.fmt(gs.tool_dps(id)) if lv > 0 else ""
+		(r["dps"] as Label).text = "採掘 %s/秒" % gs.fmt(gs.tool_dps(id)) if lv > 0 else ""
 		if lv > 0:
 			var gain := gs.tool_dps_at(id, lv + n) - gs.tool_dps(id)
 			(r["sub"] as Label).text = "+%s／次の強化段階まで %d" % [gs.fmt(gain), 25 - lv % 25]
 		else:
 			(r["sub"] as Label).text = String(td["desc"])
-		_set_cost(btn, ("強化 ×%d" % n) if lv > 0 else "配備", gs.fmt(cost), "CR", cost <= gs.credits)
+		_set_cost(btn, ("強化 ×%d" % n) if lv > 0 else "配備", gs.fmt(cost), "CR", cost <= gs.credits, cost <= gs.credits)
 		(r["row"] as PanelContainer).modulate.a = 1.0
 		(r["bar"] as Control).queue_redraw()
 		(r["pips"] as Control).queue_redraw()
+
+
+## 「鉄 28/144」のように、持っている量と必要な量
+func _have_need(cost: Dictionary) -> String:
+	var gs := GameState
+	var parts: PackedStringArray = []
+	for m in cost:
+		parts.append("%s %s/%s" % [gs.MAT_NAMES[m], gs.fmt(minf(float(gs.mats.get(m, 0.0)), float(cost[m]))), gs.fmt(float(cost[m]))])
+	return "  ".join(parts)
+
+
+## 画面上部に出す「次の目標」。最初は操作の案内、その後は次のツールの解放と惑星の破壊。
+func _goal_text() -> String:
+	var gs := GameState
+	_goal_kind = ""
+	if not gs.tip_done("buy"):
+		_goal_kind = "buy"
+		return "▶ 下の強化ボタンを押して、採掘ドローンを強くしよう"
+	if not gs.tip_done("skill"):
+		for sk in gs.SKILLS:
+			if gs.can_buy_skill(String(sk["id"])):
+				_goal_kind = "skill"
+				return "▶ 素材が貯まった。左の「スキル」で永続の強化を習得しよう"
+	if not gs.tip_done("tap") and gs.planet_time > 45.0:
+		_goal_kind = "tap"
+		return "▶ 惑星をタップすると、母艦がそこへ移動して掘る"
+	for td in gs.TOOLS:
+		var id := String(td["id"])
+		if not gs.tool_unlocked(id):
+			return "次の解放：%s（%s）" % [td["name"], _have_need(gs.skill_cost(id))]
+	return "惑星の95%を砕くと破壊。次の惑星へ進む"
+
+
+## 今のペースのままなら残り何分か。強化で速くなっていくので、1時間を超える見込みは出さない
+func _eta_text(sec: float) -> String:
+	if sec < 0.0 or sec > 3600.0:
+		return ""
+	if sec < 60.0:
+		return "・残り 1分未満"
+	return "・残り 約%d分" % int(ceil(sec / 60.0))
 
 
 # ---------------------------------------------------------------- 配置
@@ -549,16 +631,27 @@ func _layout() -> void:
 	_planet_label.position = Vector2(s.x - 212.0, 10)
 	_side.position = Vector2(10, _top_h + 6.0)
 	if _portrait():
-		var ph := clampf(s.y * 0.4, 250.0, 500.0)
+		var rows := 0
+		for id in _tool_rows:
+			if (_tool_rows[id]["row"] as PanelContainer).visible:
+				rows += 1
+		var ph := clampf(64.0 + rows * 78.0, 150.0, minf(500.0, s.y * 0.4))
 		_tool_panel.position = Vector2(8, s.y - ph - 8.0)
 		_tool_panel.size = Vector2(s.x - 16.0, ph)
 	else:
 		var pw := clampf(s.x * 0.42, 360.0, 560.0)
+		var rows := 0
+		for id in _tool_rows:
+			if (_tool_rows[id]["row"] as PanelContainer).visible:
+				rows += 1
 		_tool_panel.position = Vector2(s.x - pw - 8.0, _top_h)
-		_tool_panel.size = Vector2(pw, s.y - _top_h - 8.0)
+		_tool_panel.size = Vector2(pw, minf(s.y - _top_h - 8.0, 64.0 + rows * 78.0))
 	var area := planet_area()
 	_toast.size = Vector2(area.size.x - 40.0, 0)
 	_toast.position = Vector2(area.position.x + 20.0, area.end.y - 64.0)
+	# 左のボタン列と右上の地図のあいだに収める
+	_goal.size = Vector2(maxf(160.0, area.size.x - 66.0 - 106.0), 0)
+	_goal.position = Vector2(area.position.x + 66.0, area.position.y + 6.0)
 	_banner.size = Vector2(area.size.x - 40.0, 0)
 	_banner.position = Vector2(area.position.x + 20.0, area.position.y + area.size.y * 0.3)
 	for p in _panels:
@@ -571,13 +664,20 @@ func _process(delta: float) -> void:
 	_layout()
 	var gs := GameState
 	_credit_label.text = gs.fmt(gs.credits) + " CR"
-	_rate_label.text = "毎秒 %s ダメージ" % gs.fmt(gs.total_dps())
+	_rate_label.text = "+%s CR/秒 ・ 採掘力 %s/秒" % [gs.fmt(gs.income_rate), gs.fmt(gs.total_dps())]
+	_pulse_t += delta / maxf(Engine.time_scale, 0.01)
+	_goal.text = _goal_text()
+	_goal.visible = not any_panel()
+	var want_pulse := _goal_kind == "skill"
+	if want_pulse != bool(_skill_btn.get_meta("pulse", false)) or want_pulse:
+		_skill_btn.set_meta("pulse", want_pulse)
+		_skill_btn.queue_redraw()
 	if main != null:
 		var p: Planet = main.planet
 		var t := int(gs.planet_time)
 		var pt := int(gs.prev_time)
 		var prev := ("／前回 %d:%02d" % [pt / 60, pt % 60]) if pt > 0 else ""
-		_planet_label.text = "[right]惑星 %d：%s\n[color=#%s]掘削 %.1f%%[/color]\n経過 %d:%02d%s[/right]" % [gs.planet, gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), t / 60, t % 60, prev]
+		_planet_label.text = "[right]惑星 %d：%s\n[color=#%s]掘削 %.1f%%%s[/color]\n経過 %d:%02d%s[/right]" % [gs.planet, gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), _eta_text(p.eta()), t / 60, t % 60, prev]
 	_dot_t -= delta
 	if _dot_t <= 0.0:
 		_dot_t = 0.5
@@ -615,15 +715,15 @@ func _draw_overlay() -> void:
 		var col: Color = gs.MAT_COLORS[m]
 		_overlay.draw_rect(Rect2(12, y + 1.0, 8, 8), col)
 		var txt := "%s %s" % [gs.MAT_NAMES[m], gs.fmt(float(gs.mats[m]))]
-		_overlay.draw_string(f, Vector2(27, y + 11.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Neon.SHADOW)
-		_overlay.draw_string(f, Vector2(26, y + 10.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Neon.TEXT)
-		y += 17.0
+		_overlay.draw_string(f, Vector2(27, y + 11.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Neon.SHADOW)
+		_overlay.draw_string(f, Vector2(26, y + 10.0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Neon.TEXT)
+		y += 18.0
 	# 掘削の進み具合：2px の線
 	var frac := clampf(float(p.broken()) / maxf(1.0, p.needed()), 0.0, 1.0)
-	var ly := _top_h - 6.0
-	_overlay.draw_rect(Rect2(12, ly, s.x - 24.0, 2), Neon.TRACK)
+	var ly := _top_h - 8.0
+	_overlay.draw_rect(Rect2(12, ly, s.x - 24.0, 4), Neon.TRACK)
 	if frac > 0.0:
-		var fr := Rect2(12, ly, (s.x - 24.0) * frac, 2)
+		var fr := Rect2(12, ly, (s.x - 24.0) * frac, 4)
 		_overlay.draw_rect(fr.grow(2.0), Color(Neon.glow(Neon.ORANGE), 0.25))
 		_overlay.draw_rect(fr, Neon.ORANGE)
 	_draw_minimap(p)
@@ -708,6 +808,12 @@ func _open_tree() -> void:
 	Audio.play("open")
 	_respec_arm = false
 	get_tree().paused = true
+	# 習得できないノードが選ばれていたら、今習得できるノードを選び直す
+	if not GameState.can_buy_skill(_tree_sel) and not GameState.tool_unlocked(_tree_sel):
+		for s2 in GameState.SKILLS:
+			if GameState.can_buy_skill(String(s2["id"])):
+				_tree_sel = String(s2["id"])
+				break
 	var sk := GameState.skill_def(_tree_sel)
 	if not sk.is_empty():
 		_map_off = (sk["pos"] as Vector2) * 0.8
@@ -847,6 +953,7 @@ func _build_tree() -> void:
 			gs.remove_key(sid)
 			toast("要石を外した。素材は全額戻った")
 		elif gs.buy_skill(sid):
+			gs.mark_tip("skill")
 			Audio.play("skill")
 		_keep_map()
 		_build_tree())
@@ -854,6 +961,8 @@ func _build_tree() -> void:
 	var all := _button("まとめて強化", Vector2(bw, 48), 15)
 	all.pressed.connect(func():
 		var n := gs.buy_all_skills()
+		if n > 0:
+			gs.mark_tip("skill")
 		_keep_map()
 		_build_tree()
 		toast("%d 回強化した" % n if n > 0 else "素材が足りない"))
@@ -916,6 +1025,7 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 		var dt := int(gs.planet_time - gs.compare_time)
 		cmp = "（前の惑星より %d分%02d秒 %s）" % [absi(dt) / 60, absi(dt) % 60, "遅い" if dt > 0 else "速い"]
 	_title(_msg_box, "所要時間 %d分%02d秒%s・遺物 %d個" % [t / 60, t % 60, cmp, gs.relics.size()], 15, Color(1, 1, 1, 0.75))
+	_title(_msg_box, "残るもの：素材・スキル　／　消えるもの：クレジット・ツール・遺物", 15, Neon.YELLOW)
 	var got := RichTextLabel.new()
 	got.bbcode_enabled = true
 	got.fit_content = true
@@ -924,7 +1034,6 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	got.custom_minimum_size = Vector2(_panel_w() - 24.0, 0)
 	got.text = "[center]この惑星で集めた素材\n%s%s[/center]" % [_mat_bb(gs.mats_this_planet, false), ("\n核の回収ボーナス " + _mat_bb(extra, false)) if not extra.is_empty() else ""]
 	_msg_box.add_child(got)
-	_title(_msg_box, "クレジット・ツール・遺物は次の惑星でリセット。素材とスキルは残る", 13, Color(1, 1, 1, 0.6))
 	_title(_msg_box, "次の惑星（ずっと硬くなる）" if next.size() == 1 else "次の惑星を選ぶ", 17)
 	for tid in next:
 		var tr := gs.trait_def(String(tid))

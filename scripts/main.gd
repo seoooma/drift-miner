@@ -40,11 +40,16 @@ var _fx_budget: float = 20.0  # 1秒に出せる破片演出の数（多すぎ�
 var _manual := false  # プレイヤーが指定した移動先へ向かっている／そこを掘っている
 var _dwell: float = 0.0  # 今の場所に着いてからの時間
 var _speed: float = 0.0
+var bot := false  # 確認用の自動プレイ（--bot）。強化とスキルを自動で買い、惑星を割ったら次へ進む
+var _bot_t: float = 0.0
 
 
 func _ready() -> void:
 	randomize()
 	touch_ui = DisplayServer.is_touchscreen_available() or "--touch" in OS.get_cmdline_user_args()
+	bot = "--bot" in OS.get_cmdline_user_args()
+	if bot:
+		GameState.auto_on = true
 
 	backdrop = BackdropScript.new()
 	add_child(backdrop)
@@ -71,7 +76,12 @@ func _ready() -> void:
 		get_tree().root.size_changed.connect(_apply_mobile_scale)
 		_apply_mobile_scale()
 	build_planet(GameState.saved_hp)
-	if GameState.offline_gain > 0.0:
+	if GameState.pending_clear and planet.done:
+		# 惑星を割った画面で閉じていたときは、その画面から続ける
+		get_tree().paused = true
+		var nx: Array = GameState.next_traits if not GameState.next_traits.is_empty() else GameState.roll_next_traits()
+		hud.show_clear(GameState.clear_extra, nx)
+	elif GameState.offline_gain > 0.0:
 		hud.show_offline(GameState.offline_gain, GameState.offline_secs)
 
 
@@ -109,6 +119,8 @@ func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 	tools.dest = Vector2.INF
 	tools.auto_dest = Vector2.INF
 	var tr := gs.trait_def()
+	if gs.pending_clear:
+		return
 	hud.banner("惑星 %d：%s" % [gs.planet, tr["name"]], String(tr["desc"]) if saved.is_empty() else "")
 
 
@@ -117,11 +129,21 @@ func _process(delta: float) -> void:
 	_update_focus(delta)
 	_fit_camera(delta)
 	var gs := GameState
-	if gs.skill_level("auto_buy") > 0:
+	if gs.auto_on:
+		# 自動強化：最初は1.5秒に1回。スキル「自動強化・高速」で、0.5秒ごとに買えるだけ買う
+		var fast := gs.skill_level("auto_buy") > 0
 		_auto_t += delta
-		if _auto_t >= 0.5:
+		if _auto_t >= (0.5 if fast else 1.5):
 			_auto_t = 0.0
-			_auto_buy()
+			for k in (200 if fast else 1):
+				if not _auto_buy():
+					break
+	if bot:
+		_bot_t += delta
+		if _bot_t >= 30.0:
+			_bot_t = 0.0
+			gs.buy_all_skills()
+			print("[bot] planet %d t=%.0fs prog=%.1f%% hp=%.1f%% dps=%s rate=%s cr=%s" % [gs.planet, gs.planet_time, 100.0 * planet.progress(), 100.0 * planet.hp_progress(), gs.fmt(gs.total_dps()), gs.fmt(planet.damage_rate), gs.fmt(gs.credits)])
 	_pop_t -= delta
 	if _pop_t <= 0.0 and _pop_acc > 0.0:
 		Fx.popup(fx_layer, _pop_pos, "+%s CR" % gs.fmt(_pop_acc), Color(Color.WHITE, 0.85))
@@ -227,7 +249,7 @@ func shake(amount: float) -> void:
 	_shake = clampf(maxf(_shake, amount), 0.0, 12.0)
 
 
-func _auto_buy() -> void:
+func _auto_buy() -> bool:
 	var gs := GameState
 	var best := ""
 	var best_c := INF
@@ -240,7 +262,8 @@ func _auto_buy() -> void:
 			best = id
 			best_c = c
 	if best != "" and best_c <= gs.credits:
-		gs.buy_tool(best)
+		return gs.buy_tool(best)
+	return false
 
 
 ## 1ブロックの素材の量。先の惑星ほど多い（スキル費用の伸びに追いつくよう 1.6 倍ずつ）。
@@ -328,6 +351,10 @@ func _on_cleared() -> void:
 	get_tree().paused = true
 	hud.show_clear(extra, gs.roll_next_traits())
 	gs.save()
+	if bot:
+		print("[bot] CLEAR planet %d in %.1f min" % [gs.planet, gs.planet_time / 60.0])
+		gs.buy_all_skills()
+		go_next(String(gs.next_traits[0]))
 
 
 func go_next(trait_id: String) -> void:
@@ -355,6 +382,7 @@ func set_destination(world_pos: Vector2) -> void:
 		if i >= 0:
 			_focus_goal = planet.hover_point(i, Planet.CELL)
 	_manual = true
+	GameState.mark_tip("tap")
 	_dwell = 0.0
 	_focus_t = 0.5
 	tools.tap_effect(_focus_goal)

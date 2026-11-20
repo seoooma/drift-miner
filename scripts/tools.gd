@@ -347,7 +347,12 @@ func _draw() -> void:
 
 	# 母艦（主人公）。動いているときは進む向きに機首を向ける
 	if _carrier_pos != Vector2.INF and not planet.done:
-		_ship("carrier", _carrier_pos, _carrier_heading(), 13.0, Neon.LINE.lerp(Neon.CYAN, _carrier_flash * 0.7), 1.8)
+		# 主人公だけは船体を薄く塗り、まわりに弱い光をまとわせて、地形の白い線と見分けやすくする
+		var hull := Neon.ship("carrier", _carrier_pos, 17.0, _carrier_heading())
+		var body := hull.slice(0, hull.size() - 1)
+		draw_circle(_carrier_pos, 14.0, Color(Neon.CYAN, 0.05 + 0.03 * sin(_t * 2.0)))
+		draw_colored_polygon(body, Color(Neon.CYAN, 0.16 + 0.2 * _carrier_flash))
+		_ship("carrier", _carrier_pos, _carrier_heading(), 17.0, Neon.CYAN.lerp(Neon.LINE, 0.35 + _carrier_flash * 0.5), 2.0)
 
 	# ドローン
 	for d in _drones:

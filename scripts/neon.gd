@@ -156,8 +156,8 @@ static func ship(id: String, c: Vector2, s: float, rot: float) -> PackedVector2A
 				raw.append(Vector2.from_angle(TAU * k / 6.0) * 0.45)
 		"swarm":  # 小さな三角
 			raw = [Vector2(0.5, 0), Vector2(-0.4, 0.4), Vector2(-0.4, -0.4), Vector2(0.5, 0)]
-		"carrier":  # 母艦：幅の広い V 字の船体
-			raw = [Vector2(0.5, 0), Vector2(-0.1, 0.5), Vector2(-0.5, 0.5), Vector2(-0.25, 0), Vector2(-0.5, -0.5), Vector2(-0.1, -0.5), Vector2(0.5, 0)]
+		"carrier":  # 母艦：細長い船体の後ろに、ドローンの出入りする切り欠き
+			raw = [Vector2(0.55, 0), Vector2(0.2, 0.22), Vector2(-0.3, 0.3), Vector2(-0.5, 0.16), Vector2(-0.32, 0), Vector2(-0.5, -0.16), Vector2(-0.3, -0.3), Vector2(0.2, -0.22), Vector2(0.55, 0)]
 		_:
 			raw = [Vector2(0.4, 0.4), Vector2(-0.4, 0.4), Vector2(-0.4, -0.4), Vector2(0.4, -0.4), Vector2(0.4, 0.4)]
 	var out := PackedVector2Array()
