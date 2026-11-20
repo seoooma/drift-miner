@@ -22,11 +22,11 @@ window/handheld/orientation=4
 
 [gui]
 
-theme/custom_font="res://fonts/NotoSansJP-Subset.ttf"
+theme/custom_font="res://fonts/ui_font.tres"
 
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 
-environment/defaults/default_clear_color=Color(0.02, 0.02, 0.05, 1)
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)

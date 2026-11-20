@@ -110,7 +110,7 @@ func _process(delta: float) -> void:
 			_auto_buy()
 	_pop_t -= delta
 	if _pop_t <= 0.0 and _pop_acc > 0.0:
-		Fx.popup(fx_layer, _pop_pos, "+" + gs.fmt(_pop_acc), Color(0.85, 1.0, 0.9))
+		Fx.popup(fx_layer, _pop_pos, "+%s CR" % gs.fmt(_pop_acc), Color(Color.WHITE, 0.85))
 		_pop_acc = 0.0
 		_pop_t = 0.35
 	_mat_pop_t -= delta
@@ -203,16 +203,16 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		if show:
 			Fx.sparks(fx_layer, pos, col.lightened(0.3), 6 if b == gs.B.IRON or b == gs.B.COPPER else 12, 80.0)
 		if show and (b == gs.B.GOLD or b == gs.B.CRYSTAL):
-			Fx.flash(fx_layer, pos, Color(col, 0.7), Planet.CELL * 2.5, 0.3)
+			Fx.flash(fx_layer, pos, Color(col, 0.7), Planet.CELL * 0.9, 0.3)
 			Audio.play("ore_crystal")
 		else:
 			Audio.play("ore_metal")
 	elif b == gs.B.RELIC:
 		var r := gs.add_random_relic()
-		Fx.burst(fx_layer, pos, Color(0.4, 1.0, 0.9), 40, 220.0)
-		Fx.sparks(fx_layer, pos, Color(0.5, 1.0, 0.95), 24, 160.0)
-		Fx.ring(fx_layer, pos, Color(0.4, 1.0, 0.9), Planet.CELL * 8.0)
-		Fx.flash(fx_layer, pos, Color(0.4, 1.0, 0.9), Planet.CELL * 6.0, 0.6)
+		Fx.burst(fx_layer, pos, Neon.CYAN, 30, 220.0)
+		Fx.sparks(fx_layer, pos, Neon.CYAN, 20, 160.0)
+		Fx.ring(fx_layer, pos, Neon.CYAN, Planet.CELL * 8.0)
+		Fx.flash(fx_layer, pos, Neon.CYAN, Planet.CELL * 3.0, 0.6)
 		Audio.play("relic")
 		hud.relic_found(r)
 	elif b == gs.B.CACHE:
@@ -221,11 +221,11 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		var mats: Array = gs.MATS.slice(0, mini(gs.MATS.size(), 1 + gs.planet))
 		var mm: String = mats[randi() % mats.size()]
 		var got := gs.add_mat(mm, _mat_amount() * randf_range(4.0, 10.0))
-		Fx.burst(fx_layer, pos, Color(1.0, 0.85, 0.3), 36, 200.0)
-		Fx.sparks(fx_layer, pos, Color(1.0, 0.9, 0.5), 20, 140.0)
-		Fx.ring(fx_layer, pos, Color(1.0, 0.85, 0.3), Planet.CELL * 6.0)
+		Fx.burst(fx_layer, pos, Neon.ORANGE, 30, 200.0)
+		Fx.sparks(fx_layer, pos, Neon.YELLOW, 16, 140.0)
+		Fx.ring(fx_layer, pos, Neon.ORANGE, Planet.CELL * 6.0)
 		Audio.play("cache")
-		Fx.popup(fx_layer, pos, "宝箱！ +%s CR・%s +%s" % [gs.fmt(cr), gs.MAT_NAMES[mm], gs.fmt(got)], Color(1.0, 0.9, 0.4))
+		Fx.popup(fx_layer, pos, "宝箱！ +%s CR・%s +%s" % [gs.fmt(cr), gs.MAT_NAMES[mm], gs.fmt(got)], Neon.YELLOW)
 	else:
 		Audio.play("break")
 
@@ -235,7 +235,7 @@ func on_explosion(c: Vector2, r: float) -> void:
 		return
 	_fx_budget -= 3.0
 	Fx.explosion(fx_layer, c, r * 1.3)
-	Fx.burst(fx_layer, c, Color(1.0, 0.45, 0.2), 18, r * 4.0)
+	Fx.burst(fx_layer, c, Neon.ORANGE, 14, r * 4.0)
 	Audio.play("blast")
 	shake(4.0)
 
@@ -245,11 +245,11 @@ func _on_cleared() -> void:
 	var bonus := planet.remaining_value() * 0.5
 	gs.earn(bonus)
 	var extra := gs.finish_planet()
-	Fx.burst(fx_layer, focus, Color(1.0, 0.85, 0.5), 120, 520.0)
+	Fx.burst(fx_layer, focus, Neon.LINE, 90, 520.0)
 	Fx.explosion(fx_layer, focus, Planet.CELL * 14.0)
-	Fx.ring(fx_layer, focus, Color(1.0, 0.85, 0.5), Planet.CELL * 30.0, 0.9)
-	Fx.flash(fx_layer, focus, Color(1.0, 0.9, 0.7), Planet.CELL * 40.0, 1.0)
-	Fx.popup(fx_layer, focus, "惑星を破壊！", Color(1.0, 0.9, 0.5))
+	Fx.ring(fx_layer, focus, Neon.YELLOW, Planet.CELL * 30.0, 0.9)
+	Fx.ring(fx_layer, focus, Neon.CYAN, Planet.CELL * 20.0, 0.7)
+	Fx.popup(fx_layer, focus, "惑星を破壊！", Neon.YELLOW)
 	Audio.play("clear")
 	shake(12.0)
 	await get_tree().create_timer(1.2).timeout

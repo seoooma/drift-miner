@@ -27,7 +27,7 @@ func _ready() -> void:
 	for spec in [["+", 1.25], ["-", 0.8]]:
 		var b := Button.new()
 		b.text = spec[0]
-		b.custom_minimum_size = Vector2(40, 40)
+		b.custom_minimum_size = Vector2(44, 44)
 		b.focus_mode = Control.FOCUS_NONE
 		var f: float = spec[1]
 		b.pressed.connect(func(): _zoom_by(f))
@@ -40,7 +40,7 @@ func _place_buttons() -> void:
 	var k := 0
 	for c in get_children():
 		if c is Button:
-			(c as Button).position = Vector2(size.x - 48.0, 8.0 + k * 46.0)
+			(c as Button).position = Vector2(size.x - 52.0, 8.0 + k * 50.0)
 			k += 1
 
 
@@ -138,37 +138,46 @@ func _branch_col(sk: Dictionary) -> Color:
 
 func _draw() -> void:
 	var gs := GameState
-	var font := get_theme_font("font", "Label")
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.025, 0.05))
-	# 背景の同心円（輪）
+	var font := Neon.font()
+	draw_rect(Rect2(Vector2.ZERO, size), Neon.BG)
+	# 背景の方眼（薄い 1px の線）
 	var c0 := _to_screen(Vector2.ZERO)
-	for k in range(1, 9):
-		draw_arc(c0, k * 118.0 * zoom, 0.0, TAU, 96, Color(1, 1, 1, 0.035), 1.0)
+	var step := 40.0 * zoom
+	var gc := Color(1, 1, 1, 0.04)
+	var gx := fposmod(c0.x, step)
+	while gx < size.x:
+		draw_rect(Rect2(floorf(gx), 0, 1, size.y), gc)
+		gx += step
+	var gy := fposmod(c0.y, step)
+	while gy < size.y:
+		draw_rect(Rect2(0, floorf(gy), size.x, 1), gc)
+		gy += step
 	# 系統の名前
 	for br in gs.BRANCHES:
 		var d: Dictionary = gs.BRANCHES[br]
 		var p := _to_screen(Vector2.from_angle(deg_to_rad(float(d["angle"]))) * 118.0 * 8.0)
 		var txt := String(d["name"])
-		var fs := int(18 * clampf(zoom, 0.7, 1.3))
+		var fs := int(16 * clampf(zoom, 0.7, 1.3))
 		var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_CENTER, -1, fs).x
-		draw_string(font, p - Vector2(w * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(d["color"], 0.7))
-	# つながり
+		draw_string(font, p - Vector2(w * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(d["color"], 0.8))
+	# つながり（細い線。習得済み同士は系統の色で、薄いにじみを付ける）
 	for sk in gs.SKILLS:
 		var a := String(sk["id"])
 		for l in sk["links"]:
 			var b := String(l)
 			var la := gs.skill_level(a) > 0
 			var lb := gs.skill_level(b) > 0
-			var col := Color(0.35, 0.38, 0.45, 0.45)
-			var w := 2.0
+			var pa := _to_screen(sk["pos"])
+			var pb := _to_screen(gs.skill_def(b)["pos"])
 			if la and lb:
-				col = _branch_col(sk).lerp(Color.WHITE, 0.2)
-				w = 3.5
+				var col := _branch_col(sk)
+				draw_line(pa, pb, Neon.glow(col), 5.0)
+				draw_line(pa, pb, col, 1.5)
 			elif la or lb:
-				col = Color(0.6, 0.75, 0.95, 0.7)
-				w = 2.5
-			draw_line(_to_screen(sk["pos"]), _to_screen(gs.skill_def(b)["pos"]), col, w * clampf(zoom, 0.6, 1.4), true)
-	# ノード
+				draw_line(pa, pb, Color(Neon.LINE, 0.55), 1.0)
+			else:
+				draw_line(pa, pb, Color(Neon.MUTED, 0.35), 1.0)
+	# ノード：黒い四角に細い枠。習得済みは系統の色、買えるものは点滅する水色。
 	var pulse := 0.5 + 0.5 * sin(_t * 4.0)
 	for sk in gs.SKILLS:
 		var id := String(sk["id"])
@@ -180,36 +189,42 @@ func _draw() -> void:
 		var mx := int(sk["max"])
 		var open := gs.skill_open(id)
 		var bc := _branch_col(sk)
-		var fill := Color(0.06, 0.07, 0.1)
-		if lv > 0:
-			fill = bc.darkened(0.45)
-		draw_circle(p, r, fill)
-		var ring := Color(0.3, 0.32, 0.38)
-		var rw := 2.0
+		var rect := Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0)
+		draw_rect(rect, Neon.BG)
+		var ring := Color(Neon.MUTED, 0.6)
+		var rw := 1.0
 		if lv >= mx:
-			ring = bc.lightened(0.3)
-			rw = 3.0
+			ring = bc
+			rw = 2.0
 		elif gs.can_buy_skill(id):
-			ring = Color(0.45, 0.85, 1.0).lerp(Color.WHITE, pulse * 0.5)
-			rw = 3.0
+			ring = Neon.CYAN.lerp(Color.WHITE, pulse * 0.4)
+			rw = 2.0
+		elif lv > 0:
+			ring = bc
+			rw = 1.5
 		elif open:
-			ring = Color(0.65, 0.7, 0.8)
-		draw_arc(p, r, 0.0, TAU, 32, ring, rw, true)
-		# 途中のレベルは弧で見せる
-		if lv > 0 and lv < mx:
-			draw_arc(p, r + 4.0, -PI * 0.5, -PI * 0.5 + TAU * lv / mx, 32, bc.lightened(0.3), 2.5, true)
+			ring = Color(Neon.LINE, 0.8)
+		if rw >= 1.5:
+			draw_rect(rect, Neon.glow(ring), false, rw * 3.0)
+		draw_rect(rect.grow(-rw * 0.5), ring, false, rw)
+		# 小さな四角い色見本（左上）
+		var chip := maxf(3.0, r * 0.3)
+		draw_rect(Rect2(rect.position + Vector2(3, 3), Vector2(chip, chip)), Color(bc, 1.0 if lv > 0 else 0.35))
+		if lv > 0:
+			var inner := rect.grow(-r * 0.45)
+			draw_rect(inner, Color(bc, 0.85 if lv >= mx else 0.45))
 		if id == sel:
-			draw_arc(p, r + 8.0, 0.0, TAU, 40, Color(1.0, 0.9, 0.4), 2.5, true)
+			Neon.brackets(self, rect.grow(6.0), Neon.YELLOW, r * 0.7, 2.0)
 		var alpha := 1.0 if open or lv > 0 else 0.45
 		if String(sk["stat"]) == "":
-			var fs := int(12 * clampf(zoom, 0.75, 1.3))
+			var fs := int(11 * clampf(zoom, 0.8, 1.3))
 			var name := String(sk["name"])
 			var w := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-			draw_string_outline(font, p + Vector2(-w * 0.5, r + fs + 4.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 4, Color(0, 0, 0, 0.9))
-			draw_string(font, p + Vector2(-w * 0.5, r + fs + 4.0), name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, alpha))
-			if mx == 1 and lv > 0:
-				draw_circle(p, r * 0.3, Color(1, 1, 1, 0.9))
-			var lt := "%d" % lv if mx > 1 else ""
-			if lt != "":
-				var lw := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-				draw_string(font, p + Vector2(-lw * 0.5, fs * 0.35), lt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1, alpha))
+			var tp := p + Vector2(-w * 0.5, r + fs + 4.0)
+			draw_string(font, tp + Vector2(1, 1), name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Neon.SHADOW)
+			draw_string(font, tp, name, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(Neon.TEXT, alpha))
+			if mx > 1:
+				var lt := "%d/%d" % [lv, mx]
+				var lfs := int(10 * clampf(zoom, 0.8, 1.3))
+				var lw := font.get_string_size(lt, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs).x
+				draw_string(font, Vector2(rect.end.x - lw - 2.0, rect.position.y - 3.0), lt, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs, Color(Neon.CYAN, alpha))

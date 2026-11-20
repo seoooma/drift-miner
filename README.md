@@ -1,6 +1,6 @@
 # Drift Miner
 
-Godot 4 で作る、放置型の巨大惑星採掘ゲーム（ローグライク要素つき）。機体・エフェクト・UI・効果音には Kenney の CC0 素材、BGM には CC0 の楽曲を使っています（[CREDITS.md](CREDITS.md)）。
+Godot 4 で作る、放置型の巨大惑星採掘ゲーム（ローグライク要素つき）。見た目は黒い宇宙に細いネオンの線で描く HUD 風。効果音には Kenney の CC0 素材、BGM には CC0 の楽曲を使っています（[CREDITS.md](CREDITS.md)）。
 
 Web 版：https://seoooma.github.io/drift-miner/ （`main` にマージされるたびに GitHub Actions が書き出して公開。スマホの縦持ち・横持ち、PC に対応）
 
@@ -38,7 +38,7 @@ Web 版：https://seoooma.github.io/drift-miner/ （`main` にマージされる
 - 探査：素材の入手量、透視スキャン（遺物が見える）、遺物の勘、精錬、核の回収
 - 自動化：自動探索（遠くの鉱脈へ移動）、自動強化、誘爆制御、航路選択（次の惑星を候補から選ぶ）
 
-日本語表示のために Noto Sans JP のサブセットを同梱しています（SIL OFL、`fonts/OFL.txt`）。
+文字は等幅の Share Tech Mono（英数字）と M PLUS 1 Code（日本語、サブセット）を同梱しています（どちらも SIL OFL）。
 
 ## 構成
 
@@ -54,6 +54,8 @@ scripts/skill_map.gd    スキルマップの描画と操作（ドラッグ・�
 scripts/audio.gd        Autoload。BGM のループと効果音（間引き・音程のゆらぎ・オンオフ）
 scripts/backdrop.gd     背景（地模様・星雲・視差のある星）
 scripts/fx.gd           演出（破片・火花・発光・衝撃波・爆発アニメ・数値ポップ）
-shaders/cells.gdshader  惑星のブロックを立体的に描くシェーダー
-assets/                 画像・音（素材の出どころは CREDITS.md）
+scripts/neon.gd         見た目の決まりごと（色・線・にじみ・線のアイコン）を一か所に
+scripts/bracket_box.gd  角かっこ付きのボタンの枠
+shaders/cells.gdshader  惑星を平らな塗りと白い階段状の輪郭線で描くシェーダー
+assets/                 音（素材の出どころは CREDITS.md）
 ```
