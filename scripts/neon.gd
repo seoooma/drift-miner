@@ -123,6 +123,13 @@ static func icon(ci: CanvasItem, id: String, c: Vector2, s: float, col: Color, w
 			ci.draw_polyline(pts, col, w)
 			ci.draw_line(c + Vector2(-h * 0.6, -h * 0.15), c + Vector2(h * 0.6, -h * 0.15), col, w)
 			ci.draw_line(c + Vector2(0, -h * 0.85), c + Vector2(0, h * 0.85), col, w * 0.7)
+		"galaxy":  # 輪のある星と、まわりの小さな星
+			ci.draw_arc(c, h * 0.38, 0, TAU, 20, col, w)
+			ci.draw_arc(c, h * 0.82, -0.5, 0.5, 8, col, w)
+			ci.draw_arc(c, h * 0.82, PI - 0.5, PI + 0.5, 8, col, w)
+			ci.draw_line(c + Vector2(-h * 0.85, h * 0.25), c + Vector2(h * 0.85, -h * 0.25), col, w)
+			ci.draw_rect(Rect2(c + Vector2(h * 0.55, -h * 0.8), Vector2(3, 3)), col)
+			ci.draw_rect(Rect2(c + Vector2(-h * 0.75, h * 0.55), Vector2(3, 3)), col)
 		"sound", "mute":  # スピーカー
 			var pts := PackedVector2Array([c + Vector2(-h * 0.75, -h * 0.25), c + Vector2(-h * 0.4, -h * 0.25), c + Vector2(0, -h * 0.65), c + Vector2(0, h * 0.65), c + Vector2(-h * 0.4, h * 0.25), c + Vector2(-h * 0.75, h * 0.25), c + Vector2(-h * 0.75, -h * 0.25)])
 			ci.draw_polyline(pts, col, w)
