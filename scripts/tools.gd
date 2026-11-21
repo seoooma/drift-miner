@@ -180,7 +180,7 @@ func _process(delta: float) -> void:
 			if _drill_pulse >= 0.5 and _drill_pos.distance_to(hp) < Planet.CELL:
 				_drill_pulse = 0.0
 				_drill_flash = 1.0
-				planet.hit_area(drill_c, Planet.CELL * 2.5, drill * 0.5)
+				planet.hit_area(drill_c, Planet.CELL * 2.5, drill * 0.5, "cutter")
 				Audio.play("drill")
 				if fx_layer != null:
 					Fx.sparks(fx_layer, drill_c, Neon.ORANGE, 8, 90.0)
@@ -201,7 +201,7 @@ func _process(delta: float) -> void:
 				Audio.play("laser")
 		if _laser_target >= 0:
 			_laser_hit = planet.cell_center(_laser_target)
-			planet.hit_area(_laser_hit, Planet.CELL * 1.6, las * delta)
+			planet.hit_area(_laser_hit, Planet.CELL * 1.6, las * delta, "laser")
 
 	# 採掘ドローン：1機ずつ、まだ誰も狙っていないマスに取り付いてビームで削る
 	var drone_dps := gs.tool_dps("drone")
@@ -224,7 +224,7 @@ func _process(delta: float) -> void:
 		if tgt >= 0:
 			home = planet.hover_point(tgt, Planet.CELL * 2.5)
 			if (d["pos"] as Vector2).distance_to(home) < Planet.CELL * 1.5:
-				planet.hit(tgt, drone_dps / n * delta)
+				planet.hit(tgt, drone_dps / n * delta, "drone")
 		d["pos"] = _fly(d, d["pos"], home, 90.0 * mv * delta)
 
 	# 重力爆雷：ほかの機体が掘っていない候補へ落ちて広く砕く
@@ -241,7 +241,7 @@ func _process(delta: float) -> void:
 		b["t"] = float(b["t"]) + delta * 2.2
 		if float(b["t"]) >= 1.0:
 			_bombs.erase(b)
-			planet.hit_area(b["to"], Planet.CELL * 4.5, float(b["dmg"]))
+			planet.hit_area(b["to"], Planet.CELL * 4.5, float(b["dmg"]), "bomb")
 			Audio.play("bomb")
 			_shake(3.0)
 			if fx_layer != null:
@@ -258,7 +258,7 @@ func _process(delta: float) -> void:
 		var i := planet.raycast(_lance_from, c + dir * Planet.CELL)
 		if i >= 0 and planet.is_exposed(i):
 			_lance_hit = planet.cell_center(i)
-			planet.hit_area(_lance_hit, Planet.CELL * 1.2, lan * delta)
+			planet.hit_area(_lance_hit, Planet.CELL * 1.2, lan * delta, "lance")
 
 	# ナノスウォーム：小さな機械が1匹ずつ別のマスに散らばって食べる
 	var sw := gs.tool_dps("swarm")
@@ -276,7 +276,7 @@ func _process(delta: float) -> void:
 			var tp := planet.hover_point(tgt, Planet.CELL * 0.7)
 			b["pos"] = _fly(b, b["pos"], tp, 120.0 * mv * delta)
 			if (b["pos"] as Vector2).distance_to(tp) < 4.0:
-				planet.hit(tgt, sw / _bots.size() * delta)
+				planet.hit(tgt, sw / _bots.size() * delta, "swarm")
 
 	# 母艦（主人公）：機体の集まる場所の少し上空に浮かび、移動するときは先頭を行く
 	var up := (focus - planet.position).normalized() if focus.distance_to(planet.position) > 1.0 else Vector2.UP
@@ -325,6 +325,11 @@ func _beam(a: Vector2, b: Vector2, col: Color, w_px: float) -> void:
 	var w := Fx.px(w_px)
 	_glow.draw_line(a, b, Neon.glow(col), w * 4.0)
 	_glow.draw_line(a, b, col, w)
+
+
+## ツールの属性の色（当たった所の光に使う。無属性は白）
+func _ec(id: String) -> Color:
+	return GameState.ELEM_COLORS.get(GameState.tool_elem(id), Neon.LINE)
 
 
 ## 当たった所の小さな明るい点
@@ -454,19 +459,20 @@ func _draw_glow() -> void:
 			var tp := planet.cell_center(tgt)
 			if dp.distance_to(tp) < Planet.CELL * 4.0:
 				_beam(dp, tp, dc, 1.0)
-				_hit_dot(tp, dc, 1.2)
+				_hit_dot(tp, _ec("drone"), 1.2)
 
 	# パルスドリル：砕くたびに揺らぐ輪
 	if gs.tool_level("cutter") > 0 and _drill_pos != Vector2.INF:
 		if _drill_flash > 0.0 and planet.is_alive(_drill_target):
 			var aim := planet.cell_center(_drill_target)
 			_jring(aim, Planet.CELL * 2.5 * (1.2 - _drill_flash * 0.5), Color(Neon.ORANGE, _drill_flash), 1)
+			_hit_dot(aim, _ec("cutter"), 2.0 * _drill_flash + 0.5)
 
 	# レーザー：細い赤い線と、当たった所の明るい点
 	if gs.tool_level("laser") > 0 and _sat_pos != Vector2.INF:
 		if _laser_hit != Vector2.INF:
 			_beam(_sat_pos, _laser_hit, Neon.RED, 1.5)
-			_hit_dot(_laser_hit, Neon.RED, 2.0)
+			_hit_dot(_laser_hit, _ec("laser"), 2.0)
 
 	# 爆雷：落ちる先の揺らぐ輪
 	for b in _bombs:
@@ -476,7 +482,7 @@ func _draw_glow() -> void:
 	# ランス
 	if _lance_hit != Vector2.INF:
 		_beam(_lance_from, _lance_hit, Neon.LIME, 2.0)
-		_hit_dot(_lance_hit, Neon.LIME, 2.5)
+		_hit_dot(_lance_hit, _ec("lance"), 2.5)
 
 	# タップした場所の波紋
 	for tp in _taps:

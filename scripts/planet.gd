@@ -7,6 +7,7 @@ extends Node2D
 signal cell_broken(world_pos: Vector2, value: float, block: int)
 signal cleared
 signal relic_lost(world_pos: Vector2, block: int)  # 埋まった遺物・宝箱が爆発に巻き込まれて壊れた
+signal elem_hit(world_pos: Vector2, mult: float, elem: String)  # 属性の相性が効いた（間引いて出す）
 
 const CELL := 8.0
 const RADIUS := 56
@@ -51,6 +52,7 @@ var signal_pos := Vector2.INF  # ここから SIGNAL_R マス以内の埋まっ�
 const SIGNAL_R := 12.0
 var _exploding := false
 var _need_total: float = 0.0  # クリアに必要な耐久の合計（作ったときの値）
+var _aff_t: float = 0.0  # 相性の表示を間引く
 
 
 func _ready() -> void:
@@ -517,9 +519,16 @@ func random_surface_cell() -> int:
 	return -1
 
 
-func hit(i: int, damage: float) -> bool:
+func hit(i: int, damage: float, tool: String = "") -> bool:
 	if not is_alive(i) or done:
 		return false
+	if tool != "":
+		var b0 := int(block[i])
+		damage *= GameState.hit_mult(tool, b0, depth[i])
+		var a := GameState.affinity(GameState.tool_elem(tool), b0)
+		if a != 1.0 and _aff_t <= 0.0:
+			_aff_t = 0.7
+			elem_hit.emit(cell_center(i), a, GameState.tool_elem(tool))
 	if depth[i] > 0.5 and GameState.relic_count("deep") > 0:
 		damage *= 1.0 + GameState.relic_count("deep")
 	_dealt += minf(damage, hp[i])
@@ -585,7 +594,7 @@ func _explode_at(c: Vector2, r: float, dmg: float) -> void:
 
 
 ## 範囲攻撃。外に面しているマスだけに当たる（岩の内側には届かない）。
-func hit_area(center: Vector2, r: float, damage: float) -> void:
+func hit_area(center: Vector2, r: float, damage: float, tool: String = "") -> void:
 	var cells: Array = []
 	var rc := int(ceil(r / CELL))
 	var c0 := cell_at(center)
@@ -604,7 +613,7 @@ func hit_area(center: Vector2, r: float, damage: float) -> void:
 		return
 	var each := damage / cells.size()
 	for i in cells:
-		hit(i, each)
+		hit(i, each, tool)
 
 
 ## 狙う優先度。価値の高い鉱石や遺物ほど高い。硬い岩は後回し。
@@ -832,6 +841,7 @@ func _update_outer() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	_aff_t -= delta
 	_rate_t += delta
 	if _rate_t >= 1.0:
 		var r := _dealt / _rate_t

@@ -30,7 +30,7 @@ var _goal_kind: String = ""
 var _pulse_t: float = 0.0
 var _relic_card: PanelContainer
 var _relic_title: Label
-var _relic_row: HBoxContainer
+var _relic_row: BoxContainer
 var _relic_queue: Array = []  # まだ選んでいない遺物の候補（[id, id, id] の並び）
 var _relic_time: float = 0.0
 const RELIC_WAIT := 20.0  # この秒数のうちに選ばなければ、左の候補を自動で選ぶ
@@ -82,6 +82,8 @@ func _ready() -> void:
 	_skill_btn = skill_btn
 	var relic_btn := _icon_button("relic", "遺物", Neon.MAGENTA)
 	relic_btn.pressed.connect(_open_relics)
+	var part_btn := _icon_button("part", "パーツ", GameState.PART_COLOR)
+	part_btn.pressed.connect(_open_parts)
 	_galaxy_btn = _icon_button("galaxy", "星系", Neon.YELLOW)
 	_galaxy_btn.pressed.connect(_open_galaxy)
 	_sound_btn = _icon_button("sound", "音 ON", Neon.ORANGE)
@@ -130,7 +132,7 @@ func _ready() -> void:
 	Neon.plain_text(_relic_title, 14, GameState.RELIC_COLOR)
 	_relic_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rv.add_child(_relic_title)
-	_relic_row = HBoxContainer.new()
+	_relic_row = BoxContainer.new()
 	_relic_row.add_theme_constant_override("separation", 6)
 	rv.add_child(_relic_row)
 
@@ -379,22 +381,98 @@ func offer_relics(ids: Array) -> void:
 		_show_relic_card()
 
 
+## 宝箱などから出たパーツの3択を出す。遺物の候補と同じ札に、順番に並ぶ。
+func offer_parts(list: Array) -> void:
+	if main != null and bool(main.bot):
+		var best := _auto_part(list)
+		if best >= 0:
+			print("[bot] part %s" % list[best]["name"])
+			_equip(list[best])
+		return
+	_relic_queue.append({"parts": list})
+	if not _relic_card.visible:
+		_show_relic_card()
+
+
+## 自動で選ぶとき：今の枠のパーツより一番よくなるもの（なければ -1 で見送る）
+func _auto_part(list: Array) -> int:
+	var gs := GameState
+	var best := -1
+	var gain := 0.0
+	for k in list.size():
+		var p: Dictionary = list[k]
+		var cur: Dictionary = gs.parts.get(String(p["slot"]), {})
+		var g := gs.part_score(p) - gs.part_score(cur)
+		if g > gain:
+			gain = g
+			best = k
+	return best
+
+
+func _equip(p: Dictionary) -> void:
+	var gs := GameState
+	gs.equip_part(p)
+	banner("パーツを付けた：%s（%s）" % [p["name"], gs.slot_name(String(p["slot"]))], "・".join(gs.part_lines(p)))
+
+
+## 3択の札の文字（折り返さずに収まるよう、効果は2つずつ1行に）
+func _part_text(p: Dictionary) -> String:
+	var gs := GameState
+	var sl := String(p["slot"])
+	var cur: Dictionary = gs.parts.get(sl, {})
+	var now := "今：なし"
+	if not cur.is_empty():
+		now = "今：[%s] %s" % [gs.RARITY_NAMES[int(cur["rarity"])], cur["name"]]
+	elif gs.is_weapon_slot(sl):
+		now = "今：なし（もとの属性 %s）" % gs.ELEM_NAMES[String(gs.TOOL_ELEM.get(sl, ""))]
+	var lines: PackedStringArray = ["[%s] %s（%s）" % [gs.RARITY_NAMES[int(p["rarity"])], p["name"], gs.slot_name(sl)]]
+	var fx := gs.part_lines(p)
+	for k in range(0, fx.size(), 2):
+		lines.append("・".join(fx.slice(k, k + 2)))
+	lines.append(now)
+	return "\n".join(lines)
+
+
 func _show_relic_card() -> void:
 	if _relic_queue.is_empty():
 		_relic_card.visible = false
 		return
-	var ids: Array = _relic_queue[0]
+	var entry = _relic_queue[0]
 	_relic_time = RELIC_WAIT
 	for c in _relic_row.get_children():
 		_relic_row.remove_child(c)
 		c.queue_free()
-	for id in ids:
-		var rd := GameState.relic_def(String(id))
-		var b := _button("%s\n%s" % [rd["name"], rd["desc"]], Vector2(0, 64), 13)
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.pressed.connect(_pick_relic.bind(String(id)))
-		_relic_row.add_child(b)
+	if entry is Dictionary:
+		var list: Array = entry["parts"]
+		(_relic_card.get_theme_stylebox("panel") as StyleBoxFlat).border_color = GameState.PART_COLOR
+		_relic_title.add_theme_color_override("font_color", GameState.PART_COLOR)
+		_relic_row.vertical = true
+		for k in list.size():
+			var p: Dictionary = list[k]
+			var b := _button(_part_text(p), Vector2(0, 0), 12)
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var rc: Color = GameState.RARITY_COLORS[int(p["rarity"])]
+			for st in ["font_color", "font_hover_color", "font_pressed_color"]:
+				b.add_theme_color_override(st, rc)
+			b.pressed.connect(_pick_part.bind(k))
+			_relic_row.add_child(b)
+		var skip := _button("見送る", Vector2(0, 32), 12)
+		skip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		skip.pressed.connect(_pick_part.bind(-1))
+		_relic_row.add_child(skip)
+	else:
+		(_relic_card.get_theme_stylebox("panel") as StyleBoxFlat).border_color = GameState.RELIC_COLOR
+		_relic_title.add_theme_color_override("font_color", GameState.RELIC_COLOR)
+		_relic_row.vertical = false
+		for id in entry:
+			var rd := GameState.relic_def(String(id))
+			var b := _button("%s\n%s" % [rd["name"], rd["desc"]], Vector2(0, 64), 13)
+			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.pressed.connect(_pick_relic.bind(String(id)))
+			_relic_row.add_child(b)
+	_relic_card.reset_size()
 	_relic_card.visible = true
 
 
@@ -404,6 +482,18 @@ func _pick_relic(id: String) -> void:
 	_relic_queue.pop_front()
 	var r := GameState.add_relic(id)
 	relic_found(r)
+	_relic_card.visible = false
+	_show_relic_card.call_deferred()
+
+
+## k はパーツの番号（-1 は見送る）
+func _pick_part(k: int) -> void:
+	if _relic_queue.is_empty() or not (_relic_queue[0] is Dictionary):
+		return
+	var list: Array = _relic_queue.pop_front()["parts"]
+	if k >= 0 and k < list.size():
+		_equip(list[k])
+		Audio.play("skill")
 	_relic_card.visible = false
 	_show_relic_card.call_deferred()
 
@@ -620,7 +710,8 @@ func _update_tools() -> void:
 		var n := _buy_count(id)
 		var cost := gs.upgrade_cost(id, n)
 		(r["name"] as Label).text = String(td["name"])
-		(r["lv"] as Label).text = "Lv. %d" % lv
+		(r["lv"] as Label).text = "Lv. %d・%s" % [lv, gs.ELEM_NAMES[gs.tool_elem(id)]]
+		(r["lv"] as Label).add_theme_color_override("font_color", Color(gs.ELEM_COLORS[gs.tool_elem(id)], 0.85) if gs.tool_elem(id) != "" else Neon.MUTED)
 		(r["dps"] as Label).text = "採掘 %s/秒" % gs.fmt(gs.tool_dps(id)) if lv > 0 else ""
 		if lv > 0:
 			var gain := gs.tool_dps_at(id, lv + n) - gs.tool_dps(id)
@@ -742,11 +833,18 @@ func _process(delta: float) -> void:
 	_rate_label.text = "+%s CR/秒 ・ 採掘力 %s/秒" % [gs.fmt(gs.income_rate), gs.fmt(gs.total_dps())]
 	_pulse_t += delta / maxf(Engine.time_scale, 0.01)
 	_goal.text = _goal_text()
-	if _relic_card.visible and not get_tree().paused:
+	if _relic_card.visible and not get_tree().paused and not _relic_queue.is_empty():
 		_relic_time -= delta
-		_relic_title.text = "遺物を掘り当てた！1つ選ぶ（%d秒で左を自動で選ぶ）" % int(ceil(maxf(0.0, _relic_time)))
-		if _relic_time <= 0.0 and not _relic_queue.is_empty():
-			_pick_relic(String((_relic_queue[0] as Array)[0]))
+		var left := int(ceil(maxf(0.0, _relic_time)))
+		var head = _relic_queue[0]
+		if head is Dictionary:
+			_relic_title.text = "パーツを見つけた！1つ付ける（%d秒で、よくなるものを自動で選ぶ）" % left
+			if _relic_time <= 0.0:
+				_pick_part(_auto_part(head["parts"]))
+		else:
+			_relic_title.text = "遺物を掘り当てた！1つ選ぶ（%d秒で左を自動で選ぶ）" % left
+			if _relic_time <= 0.0:
+				_pick_relic(String((head as Array)[0]))
 	_relic_card.visible = not _relic_queue.is_empty() and not any_panel()
 	_goal.visible = not any_panel()
 	var want_pulse := _goal_kind == "skill"
@@ -1103,6 +1201,39 @@ func _open_relics() -> void:
 	_msg_panel.visible = true
 
 
+func _open_parts() -> void:
+	Audio.play("open")
+	get_tree().paused = true
+	_clear(_msg_box)
+	var gs := GameState
+	_title(_msg_box, "パーツ", 22, gs.PART_COLOR)
+	_title(_msg_box, "宝箱や硬い岩から、ランダムな効果のパーツが3択で出る。同じ枠に付けると入れ替わる。\n付けたパーツは星系 %d の間ずっと残り、星系を制覇するか周回すると外れる" % gs.galaxy(), 13, Color(1, 1, 1, 0.7))
+	for sl in gs.open_slots():
+		var p: Dictionary = gs.parts.get(String(sl), {})
+		var lbl := RichTextLabel.new()
+		lbl.bbcode_enabled = true
+		lbl.fit_content = true
+		lbl.scroll_active = false
+		lbl.add_theme_font_size_override("normal_font_size", 14)
+		lbl.custom_minimum_size = Vector2(_panel_w() - 24.0, 0)
+		var head := "[color=#%s]%s[/color]" % [Neon.MUTED.to_html(false), gs.slot_name(String(sl))]
+		if gs.is_weapon_slot(String(sl)):
+			var e := gs.tool_elem(String(sl))
+			head += "　[color=#%s]属性 %s[/color]" % [(gs.ELEM_COLORS[e] as Color).to_html(false), gs.ELEM_NAMES[e]]
+		if p.is_empty():
+			lbl.text = "%s\n[color=#%s]なし[/color]" % [head, Neon.MUTED.to_html(false)]
+		else:
+			var rc: Color = gs.RARITY_COLORS[int(p["rarity"])]
+			lbl.text = "%s\n[color=#%s][%s] %s[/color]　%s" % [head, rc.to_html(false), gs.RARITY_NAMES[int(p["rarity"])], p["name"], "・".join(gs.part_lines(p))]
+		_msg_box.add_child(lbl)
+	_title(_msg_box, "属性の相性（強い ×%s／弱い ×%s、ほかは等倍）" % [gs.fmt(gs.ELEM_STRONG), gs.fmt(gs.ELEM_WEAK)], 15, Neon.LINE)
+	for e in gs.ELEMS:
+		_title(_msg_box, "%s：%s" % [gs.ELEM_NAMES[e], gs.ELEM_DESC[e]], 13, gs.ELEM_COLORS[e])
+	var back := _wide(_msg_box, "閉じる", 48, 17)
+	back.pressed.connect(_close)
+	_msg_panel.visible = true
+
+
 func show_clear(extra: Dictionary, next: Array) -> void:
 	_clear(_msg_box)
 	var gs := GameState
@@ -1116,7 +1247,7 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 		var dt := int(gs.planet_time - gs.compare_time)
 		cmp = "（前の惑星より %d分%02d秒 %s）" % [absi(dt) / 60, absi(dt) % 60, "遅い" if dt > 0 else "速い"]
 	_title(_msg_box, "所要時間 %d分%02d秒%s・遺物 %d個" % [t / 60, t % 60, cmp, gs.relics.size()], 15, Color(1, 1, 1, 0.75))
-	_title(_msg_box, "残るもの：素材・スキル　／　消えるもの：クレジット・ツール・遺物", 15, Neon.YELLOW)
+	_title(_msg_box, "残るもの：素材・スキル・パーツ（星系の間）　／　消えるもの：クレジット・ツール・遺物" if not galaxy_done else "残るもの：素材・スキル　／　消えるもの：クレジット・ツール・遺物・パーツ", 15, Neon.YELLOW)
 	var got := RichTextLabel.new()
 	got.bbcode_enabled = true
 	got.fit_content = true
@@ -1198,7 +1329,7 @@ func _build_galaxy() -> void:
 	_title(_msg_box, "いまは %s（最高 %s）" % [gs.place_name(), gs.place_name(gs.best_planet)], 15, Neon.CYAN)
 	var best := gs.galaxy_best()
 	if best >= 2:
-		_title(_msg_box, "周回：開いた星系の惑星1からやり直せる。今の惑星のクレジット・ツール・遺物は消える", 13, Color(1, 1, 1, 0.6))
+		_title(_msg_box, "周回：開いた星系の惑星1からやり直せる。今の惑星のクレジット・ツール・遺物と、付けたパーツは消える", 13, Color(1, 1, 1, 0.6))
 		for g in range(1, best + 1):
 			if g == gs.galaxy():
 				continue
