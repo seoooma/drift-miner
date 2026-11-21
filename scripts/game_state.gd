@@ -95,6 +95,64 @@ const RELIC_CHOICES := 3
 const RELIC_COLOR := Color("#E070D8")  # 遺物はマゼンタ（遺物ボタンと同じ）
 const CACHE_COLOR := Color("#F2E05A")  # 宝箱は黄色
 
+## 属性：攻撃ごとに属性があり、ブロックとの相性で削る速さが変わる（強い ×2、弱い ×0.5）。
+## 岩・核の外側の大半はどの属性でも等倍なので、全体のペースは大きくは変わらない。
+const ELEMS := ["heat", "shock", "volt"]
+const ELEM_NAMES := {"": "無", "heat": "熱", "shock": "衝撃", "volt": "電磁"}
+const ELEM_COLORS := {"": Color("#E8ECEF"), "heat": Color("#F2A23A"), "shock": Color("#4FD8E8"), "volt": Color("#F2E05A")}
+const ELEM_STRONG := 2.0
+const ELEM_WEAK := 0.5
+const AFFINITY := {
+	"heat": {B.IRON: ELEM_STRONG, B.COPPER: ELEM_STRONG, B.VOLATILE: ELEM_STRONG, B.HARD: ELEM_WEAK},
+	"shock": {B.HARD: ELEM_STRONG, B.CRYSTAL: ELEM_STRONG, B.GOLD: ELEM_WEAK},
+	"volt": {B.GOLD: ELEM_STRONG, B.CORE: ELEM_STRONG, B.CRYSTAL: ELEM_WEAK},
+}
+const ELEM_DESC := {
+	"": "どのブロックにも等倍",
+	"heat": "鉄・銅・爆薬岩に強い／硬い岩に弱い",
+	"shock": "硬い岩・結晶に強い／金に弱い",
+	"volt": "金・核に強い／結晶に弱い",
+}
+## ツールのもともとの属性（武器パーツで変えられる）
+const TOOL_ELEM := {"drone": "", "cutter": "shock", "laser": "heat", "bomb": "shock", "lance": "volt", "swarm": "heat"}
+
+## パーツ（ローグライク要素）：宝箱や硬い岩から、ランダムな効果つきのパーツが3択で出る。
+## 枠は各ツールの武器パーツ1つずつと、母艦の「反応炉」「機体フレーム」。同じ枠に付けると入れ替わる。
+## 付けたパーツは星系の間ずっと残り、星系を制覇したときや周回で外れる。
+const PART_SLOTS := ["drone", "cutter", "laser", "bomb", "lance", "swarm", "reactor", "frame"]
+const SLOT_NAMES := {"reactor": "反応炉", "frame": "機体フレーム"}
+const PART_BASE := {
+	"drone": ["照準モジュール", "ビーム発振器"], "cutter": ["ドリルビット", "衝角"], "laser": ["集光レンズ", "照射炉"],
+	"bomb": ["炸薬コア", "重力殻"], "lance": ["穿孔ヘッド", "加速管"], "swarm": ["群体AI", "分解酵素"],
+	"reactor": ["反応炉", "出力変換器"], "frame": ["機体フレーム", "貨物区画"],
+}
+const ELEM_PREFIX := {"": "", "heat": "灼熱の", "shock": "重撃の", "volt": "電磁の"}
+const RARITY_NAMES := ["ふつう", "レア", "エピック"]
+const RARITY_COLORS := [Color("#E8ECEF"), Color("#4FD8E8"), Color("#E070D8")]
+const RARITY_W := [70.0, 25.0, 5.0]  # 出る重み
+const RARITY_MODS := [1, 2, 3]  # 効果の数
+const RARITY_K := [1.0, 1.4, 2.0]  # 効果の強さ
+## 効果。base は「ふつう」のときの中央値（±40%でぶれる）
+const PART_MODS := {
+	"pow": {"text": "威力 +%d%%", "base": 0.35, "weapon": true},
+	"strong": {"text": "弱点を突いたとき +%d%%", "base": 0.5, "weapon": true},
+	"ore": {"text": "鉱石への威力 +%d%%", "base": 0.6, "weapon": true},
+	"deep": {"text": "深い所への威力 +%d%%", "base": 0.5, "weapon": true},
+	"all": {"text": "全ツールの威力 +%d%%", "base": 0.2, "weapon": false},
+	"heat": {"text": "熱属性の威力 +%d%%", "base": 0.35, "weapon": false},
+	"shock": {"text": "衝撃属性の威力 +%d%%", "base": 0.35, "weapon": false},
+	"volt": {"text": "電磁属性の威力 +%d%%", "base": 0.35, "weapon": false},
+	"cr": {"text": "獲得クレジット +%d%%", "base": 0.25, "weapon": false},
+	"mat": {"text": "素材の入手量 +%d%%", "base": 0.15, "weapon": false},
+	"cost": {"text": "強化費用 -%d%%", "base": 0.06, "weapon": false},
+	"move": {"text": "移動速度 +%d%%", "base": 0.3, "weapon": false},
+}
+const REACTOR_MODS := ["all", "heat", "shock", "volt"]
+const FRAME_MODS := ["cr", "mat", "cost", "move"]
+const PART_CHANCE_CACHE := 0.35  # 宝箱からパーツが出る確率
+const PART_CHANCE_HARD := 0.006  # 硬い岩からパーツが出る確率
+const PART_COLOR := Color("#9BE86A")  # パーツの札と画面の差し色
+
 ## スキルマップ。基地から5つの系統が放射状に広がり、系統のあいだも橋でつながる網の目。
 ## links のどれか（逆向きも含む）が Lv1 以上なら習得できる。pos はマップ上の座標。
 ## stat があるのは小さなノード（同じ stat の合計で効く）。cost は Lv0 のときの素材。
@@ -184,6 +242,7 @@ var est_bias: float = EST_BIAS0
 var est_start: float = 0.0  # この惑星に着いたときの見込み（秒、ずれの補正前）
 var offline_used: bool = false  # この惑星で閉じていた間の採掘があった（ずれの補正に使わない）  # この惑星の硬さの倍率（惑星に着いたときに決めて保存する）
 var compare_time: float = 0.0  # 惑星クリアの画面で比べる、前の惑星の所要時間
+var parts := {}  # 枠 → パーツ（星系の間残る）
 
 # --- 永続 ---
 var mats := {}
@@ -275,6 +334,8 @@ func start_planet(p: int, t: String) -> void:
 		tool_levels[td["id"]] = 0
 	tool_levels["drone"] = 1
 	relics = []
+	if local_planet() == 1:
+		parts = {}  # 新しい星系に入ったとき（制覇・周回）はパーツが外れる
 	pm = 1.0
 	pm = choose_pm()
 	if advancing and p > 1:
@@ -487,7 +548,7 @@ func cell_value(depth: float) -> float:
 
 
 func cr_mult() -> float:
-	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * (1.0 + 0.5 * relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0) * galaxy_cr_mult() * core_mult("cr")
+	return (1.0 + part_stat("cr")) * pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * (1.0 + 0.5 * relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0) * galaxy_cr_mult() * core_mult("cr")
 
 
 func earn(amount: float, track: bool = true) -> void:
@@ -497,7 +558,7 @@ func earn(amount: float, track: bool = true) -> void:
 
 
 func mat_mult() -> float:
-	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * (1.0 + 0.3 * relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0) * core_mult("mat")
+	return (1.0 + part_stat("mat")) * (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * (1.0 + 0.3 * relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0) * core_mult("mat")
 
 
 func add_mat(m: String, amount: float) -> float:
@@ -603,7 +664,7 @@ func tool_dps_at(id: String, lv: int) -> float:
 	if lv <= 0:
 		return 0.0
 	var t := tool_def(id)
-	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult()
+	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult() * part_pow(id)
 	if id == "drone":
 		d *= (1.0 + 0.6 * skill_level("drone_pow") + stat("dpow")) * (1.0 + 1.0 * relic_count("tap"))
 		# 表示も計算も、ドローン全体の威力（1機ごとの威力 × 機数）
@@ -634,7 +695,7 @@ func total_dps() -> float:
 
 
 func cost_mult() -> float:
-	return pow(0.95, skill_level("discount")) * maxf(0.3, 1.0 - stat("cost")) * pow(0.85, relic_count("cost"))
+	return maxf(0.5, 1.0 - part_stat("cost")) * pow(0.95, skill_level("discount")) * maxf(0.3, 1.0 - stat("cost")) * pow(0.85, relic_count("cost"))
 
 
 func upgrade_cost(id: String, n: int = 1) -> float:
@@ -673,7 +734,7 @@ func milestone_frac(id: String) -> float:
 
 ## 機体の移動速度の倍率
 func move_mult() -> float:
-	return (1.0 + 0.4 * skill_level("thrust") + stat("move")) * (2.0 if has_key("k_drift") else 1.0)
+	return (1.0 + part_stat("move")) * (1.0 + 0.4 * skill_level("thrust") + stat("move")) * (2.0 if has_key("k_drift") else 1.0)
 
 
 ## 自動探索で鉄・銅などの鉱脈を探しに行く範囲（マス）
@@ -683,6 +744,154 @@ func scan_radius() -> int:
 
 func drone_count() -> int:
 	return 1 + skill_level("drone_count") + relic_count("drone")
+
+
+# ---------------------------------------------------------------- 属性とパーツ
+
+
+## ツールの属性（武器パーツの属性が優先）
+func tool_elem(id: String) -> String:
+	var p: Dictionary = parts.get(id, {})
+	if p.has("elem"):
+		return String(p["elem"])
+	return String(TOOL_ELEM.get(id, ""))
+
+
+## 属性とブロックの相性（×2 / ×0.5 / ×1）
+func affinity(elem: String, b: int) -> float:
+	if elem == "":
+		return 1.0
+	return float((AFFINITY.get(elem, {}) as Dictionary).get(b, 1.0))
+
+
+## 付けているパーツの効果の合計。slot を渡すとその枠だけ
+func part_stat(k: String, slot: String = "") -> float:
+	var t := 0.0
+	for sl in parts:
+		if slot != "" and sl != slot:
+			continue
+		for m in (parts[sl] as Dictionary).get("mods", []):
+			if String(m["k"]) == k:
+				t += float(m["v"])
+	return t
+
+
+## パーツによる、ツールの表示の威力の倍率（どのマスにも効く分）
+func part_pow(id: String) -> float:
+	var e := tool_elem(id)
+	var m := (1.0 + part_stat("pow", id)) * (1.0 + part_stat("all"))
+	if e != "":
+		m *= 1.0 + part_stat(e)
+	return m
+
+
+## マスに当てたときの倍率（相性と、武器パーツの条件つきの効果）。tool が "" なら属性なし
+func hit_mult(tool: String, b: int, dp: float) -> float:
+	if tool == "":
+		return 1.0
+	var a := affinity(tool_elem(tool), b)
+	var m := a
+	if a > 1.0:
+		m *= 1.0 + part_stat("strong", tool)
+	if String(BLOCKS[b]["mat"]) != "":
+		m *= 1.0 + part_stat("ore", tool)
+	if dp > 0.5:
+		m *= 1.0 + part_stat("deep", tool)
+	return m
+
+
+func slot_name(slot: String) -> String:
+	if SLOT_NAMES.has(slot):
+		return String(SLOT_NAMES[slot])
+	return String(tool_def(slot).get("name", slot))
+
+
+func is_weapon_slot(slot: String) -> bool:
+	return not SLOT_NAMES.has(slot)
+
+
+## パーツを付けられる枠（解放済みのツールと母艦の2枠）
+func open_slots() -> Array:
+	var out: Array = []
+	for sl in PART_SLOTS:
+		if not is_weapon_slot(sl) or tool_unlocked(sl):
+			out.append(sl)
+	return out
+
+
+## ランダムなパーツを1つ作る。先の星系ほど少しレアが出やすい
+func roll_part(slot: String = "") -> Dictionary:
+	if slot == "":
+		var sl := open_slots()
+		slot = String(sl[randi() % sl.size()])
+	var w := RARITY_W.duplicate()
+	w[1] = float(w[1]) * (1.0 + 0.15 * (galaxy() - 1))
+	w[2] = float(w[2]) * (1.0 + 0.3 * (galaxy() - 1))
+	var roll := randf() * (float(w[0]) + float(w[1]) + float(w[2]))
+	var rar := 0
+	if roll > float(w[0]):
+		rar = 1 if roll <= float(w[0]) + float(w[1]) else 2
+	var p := {"slot": slot, "rarity": rar}
+	var pool: Array
+	var elem := ""
+	if is_weapon_slot(slot):
+		# 武器パーツは属性を持つ（6割はツールのもとの属性と違う属性になる）
+		elem = String(TOOL_ELEM.get(slot, ""))
+		if elem == "" or randf() < 0.6:
+			elem = String(ELEMS[randi() % ELEMS.size()])
+		p["elem"] = elem
+		pool = ["pow", "strong", "ore", "deep"]
+	else:
+		pool = (REACTOR_MODS if slot == "reactor" else FRAME_MODS).duplicate()
+	pool.shuffle()
+	var mods: Array = []
+	for k in mini(int(RARITY_MODS[rar]), pool.size()):
+		var id := String(pool[k])
+		var v := float(PART_MODS[id]["base"]) * float(RARITY_K[rar]) * randf_range(0.6, 1.4)
+		v = roundf(v * 100.0) / 100.0
+		mods.append({"k": id, "v": maxf(0.01, v)})
+	p["mods"] = mods
+	var bases: Array = PART_BASE[slot]
+	p["name"] = String(ELEM_PREFIX.get(elem, "")) + String(bases[randi() % bases.size()])
+	return p
+
+
+## 宝箱などから出るパーツの3択（同じ枠に偏らないよう、なるべく別の枠から）
+func roll_part_choices() -> Array:
+	var sl := open_slots()
+	sl.shuffle()
+	var out: Array = []
+	for k in 3:
+		out.append(roll_part(String(sl[k % sl.size()])))
+	return out
+
+
+func part_lines(p: Dictionary) -> PackedStringArray:
+	var out: PackedStringArray = []
+	if p.has("elem"):
+		out.append("属性 %s" % ELEM_NAMES[String(p["elem"])])
+	for m in p.get("mods", []):
+		out.append(String(PART_MODS[String(m["k"])]["text"]) % int(round(float(m["v"]) * 100.0)))
+	return out
+
+
+## パーツのよさの目安（自動で選ぶときに使う）
+func part_score(p: Dictionary) -> float:
+	if p.is_empty():
+		return 0.0
+	var s := 0.0
+	for m in p.get("mods", []):
+		s += float(m["v"]) / float(PART_MODS[String(m["k"])]["base"])
+	return s
+
+
+func equip_part(p: Dictionary) -> void:
+	parts[String(p["slot"])] = p
+	changed.emit()
+
+
+func part_count() -> int:
+	return parts.size()
 
 
 # ---------------------------------------------------------------- スキルツリー
@@ -903,6 +1112,7 @@ func save() -> void:
 	cfg.set_value("run", "credits", credits)
 	cfg.set_value("run", "tools", tool_levels)
 	cfg.set_value("run", "relics", relics)
+	cfg.set_value("run", "parts", parts)
 	cfg.set_value("run", "mats_this_planet", mats_this_planet)
 	cfg.set_value("run", "time", planet_time)
 	cfg.set_value("run", "hp", saved_hp)
@@ -940,6 +1150,7 @@ func _load() -> void:
 	for k in tl:
 		tool_levels[k] = int(tl[k])
 	relics = cfg.get_value("run", "relics", [])
+	parts = cfg.get_value("run", "parts", {})
 	var mtp: Dictionary = cfg.get_value("run", "mats_this_planet", {})
 	for k in mtp:
 		mats_this_planet[k] = float(mtp[k])

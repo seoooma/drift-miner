@@ -130,6 +130,12 @@ static func icon(ci: CanvasItem, id: String, c: Vector2, s: float, col: Color, w
 			ci.draw_line(c + Vector2(-h * 0.85, h * 0.25), c + Vector2(h * 0.85, -h * 0.25), col, w)
 			ci.draw_rect(Rect2(c + Vector2(h * 0.55, -h * 0.8), Vector2(3, 3)), col)
 			ci.draw_rect(Rect2(c + Vector2(-h * 0.75, h * 0.55), Vector2(3, 3)), col)
+		"part":  # 六角ナットと中の穴（パーツ）
+			var pts := PackedVector2Array()
+			for k in 7:
+				pts.append(c + Vector2.from_angle(PI / 6.0 + TAU * k / 6.0) * h * 0.82)
+			ci.draw_polyline(pts, col, w)
+			ci.draw_arc(c, h * 0.32, 0, TAU, 16, col, w)
 		"sound", "mute":  # スピーカー
 			var pts := PackedVector2Array([c + Vector2(-h * 0.75, -h * 0.25), c + Vector2(-h * 0.4, -h * 0.25), c + Vector2(0, -h * 0.65), c + Vector2(0, h * 0.65), c + Vector2(-h * 0.4, h * 0.25), c + Vector2(-h * 0.75, h * 0.25), c + Vector2(-h * 0.75, -h * 0.25)])
 			ci.draw_polyline(pts, col, w)

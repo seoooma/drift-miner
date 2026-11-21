@@ -75,6 +75,7 @@ func _ready() -> void:
 	planet.cell_broken.connect(_on_cell_broken)
 	planet.cleared.connect(_on_cleared)
 	planet.relic_lost.connect(_on_relic_lost)
+	planet.elem_hit.connect(_on_elem_hit)
 	GameState.hp_provider = func() -> PackedFloat32Array: return planet.hp
 	GameState.rate_provider = func() -> float: return planet.damage_rate
 
@@ -400,6 +401,9 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		if randf() < 0.3 * gs.relic_count("hoard"):
 			_relic_fx(pos)
 			hud.offer_relics(gs.roll_relic_choices())
+		if randf() < gs.PART_CHANCE_CACHE:
+			_part_fx(pos)
+			hud.offer_parts(gs.roll_part_choices())
 	elif b == gs.B.HARD and gs.relic_count("hard") > 0:
 		var got := gs.add_mat("iron", _mat_amount() * 3.0 * gs.relic_count("hard"))
 		var e: Array = _mat_pop.get("iron", [0.0, pos])
@@ -407,6 +411,28 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		Audio.play("break")
 	else:
 		Audio.play("break")
+	if b == gs.B.HARD and randf() < gs.PART_CHANCE_HARD:
+		_part_fx(pos)
+		hud.offer_parts(gs.roll_part_choices())
+
+
+## パーツが出たとき（緑の光）
+func _part_fx(pos: Vector2) -> void:
+	var c: Color = GameState.PART_COLOR
+	Fx.burst(fx_layer, pos, c, 24, 180.0)
+	Fx.ring(fx_layer, pos, c, Planet.CELL * 6.0)
+	Fx.flash(fx_layer, pos, c, Planet.CELL * 2.0, 0.5)
+	_absorb(pos, c, 6)
+	Audio.play("relic")
+
+
+## 属性の相性が効いたマスに、小さく「▲熱 ×2」「▼熱 ×0.5」
+func _on_elem_hit(pos: Vector2, mult: float, elem: String) -> void:
+	var gs := GameState
+	if mult > 1.0:
+		Fx.popup(fx_layer, pos, "▲%s ×%s" % [gs.ELEM_NAMES[elem], gs.fmt(mult)], gs.ELEM_COLORS[elem])
+	else:
+		Fx.popup(fx_layer, pos, "▼%s ×%s" % [gs.ELEM_NAMES[elem], gs.fmt(mult)], Neon.MUTED)
 
 
 func _relic_fx(pos: Vector2) -> void:
