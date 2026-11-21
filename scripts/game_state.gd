@@ -52,7 +52,7 @@ const TRAITS := [
 	{"id": "iron", "name": "鉄の惑星", "desc": "鉄鉱石が2倍", "rates": {B.IRON: 2.0}},
 	{"id": "copper", "name": "銅の惑星", "desc": "銅鉱石が2倍", "rates": {B.COPPER: 2.0}},
 	{"id": "gold", "name": "黄金の惑星", "desc": "金鉱石が2倍", "rates": {B.GOLD: 2.0}},
-	{"id": "crystal", "name": "結晶の惑星", "desc": "結晶が2.5倍", "rates": {B.CRYSTAL: 2.5}},
+	{"id": "crystal", "name": "結晶の惑星", "desc": "結晶が3倍", "rates": {B.CRYSTAL: 2.5}},
 	{"id": "ruins", "name": "遺跡の惑星", "desc": "遺物と宝箱が多い", "rates": {B.RELIC: 2.5, B.CACHE: 2.0}},
 	{"id": "volcanic", "name": "火山惑星", "desc": "爆薬岩が多い。連鎖で一気に崩れる", "rates": {B.VOLATILE: 4.0}},
 	{"id": "shell", "name": "硬殻惑星", "desc": "硬い岩が多いが、鉱物も多い", "rates": {B.HARD: 3.0, B.IRON: 1.5, B.COPPER: 1.5, B.GOLD: 1.5}},
@@ -62,7 +62,7 @@ const TRAITS := [
 const RELICS := [
 	{"id": "power", "name": "古代の動力炉", "desc": "全ツールの威力 ×1.5"},
 	{"id": "cr", "name": "黄金の秤", "desc": "獲得クレジット ×1.5"},
-	{"id": "drone", "name": "眠れる無人機", "desc": "採掘ドローン +2機"},
+	{"id": "drone", "name": "眠れる無人機", "desc": "採掘ドローン +2機（1機ごとに同じ威力で掘る）"},
 	{"id": "tap", "name": "精密照準器", "desc": "採掘ドローンの威力 ×2"},
 	{"id": "cost", "name": "商人の印章", "desc": "ツールの強化費用 -15%"},
 	{"id": "mat", "name": "鉱脈の羅針盤", "desc": "素材の入手量 ×1.3"},
@@ -75,7 +75,7 @@ const SKILLS := [
 	{"id": "base", "name": "母艦", "desc": "すべての始まり。機体はこの船から出て働く", "max": 1, "cost": {}, "growth": 1.0, "links": [], "pos": Vector2(0, 0), "branch": "", "stat": "", "amt": 0.0},
 	{"id": "a1", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"iron": 30}, "growth": 1.6, "links": ["base"], "pos": Vector2(0, -118), "branch": "A", "stat": "pow", "amt": 0.15},
 	{"id": "drone_pow", "name": "ドローン出力", "desc": "採掘ドローンの威力 +60%", "max": 15, "cost": {"iron": 48}, "growth": 1.45, "links": ["a1"], "pos": Vector2(0, -236), "branch": "A", "stat": "", "amt": 0.0},
-	{"id": "drone_count", "name": "ドローン増設", "desc": "採掘ドローン +1機", "max": 5, "cost": {"copper": 72}, "growth": 2.2, "links": ["drone_pow"], "pos": Vector2(-68, -347), "branch": "A", "stat": "", "amt": 0.0},
+	{"id": "drone_count", "name": "ドローン増設", "desc": "採掘ドローン +1機（1機ごとに同じ威力で掘る）", "max": 5, "cost": {"copper": 72}, "growth": 2.2, "links": ["drone_pow"], "pos": Vector2(-68, -347), "branch": "A", "stat": "", "amt": 0.0},
 	{"id": "a2", "name": "ドローン調整", "desc": "採掘ドローンの威力 +25%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["drone_pow"], "pos": Vector2(68, -347), "branch": "A", "stat": "dpow", "amt": 0.25},
 	{"id": "a3", "name": "ドローン調整", "desc": "採掘ドローンの威力 +25%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["drone_count"], "pos": Vector2(-106, -460), "branch": "A", "stat": "dpow", "amt": 0.25},
 	{"id": "resonance", "name": "共振増幅", "desc": "全ツールの威力 ×1.45", "max": 20, "cost": {"gold": 48}, "growth": 1.4, "links": ["a2"], "pos": Vector2(74, -466), "branch": "A", "stat": "", "amt": 0.0},
@@ -107,7 +107,7 @@ const SKILLS := [
 	{"id": "refine", "name": "精錬", "desc": "素材が2倍になる確率 +10%", "max": 5, "cost": {"gold": 144, "crystal": 36}, "growth": 1.8, "links": ["d2"], "pos": Vector2(-334, 334), "branch": "D", "stat": "", "amt": 0.0},
 	{"id": "core_bonus", "name": "核の回収", "desc": "惑星を割ったとき、集めた素材の +20% を追加で得る", "max": 5, "cost": {"crystal": 144}, "growth": 2.0, "links": ["relic_luck", "refine"], "pos": Vector2(-347, 477), "branch": "D", "stat": "", "amt": 0.0},
 	{"id": "auto_scan", "name": "自動探索", "desc": "周りに鉱石がないとき、遠くの鉱脈を探して移動する（探索範囲 +8マス）", "max": 5, "cost": {"iron": 120}, "growth": 1.9, "links": ["base"], "pos": Vector2(-112, -36), "branch": "E", "stat": "", "amt": 0.0},
-	{"id": "auto_buy", "name": "自動強化", "desc": "一番安いツールを自動で強化", "max": 1, "cost": {"copper": 300, "iron": 300}, "growth": 1.0, "links": ["auto_scan"], "pos": Vector2(-224, -73), "branch": "E", "stat": "", "amt": 0.0},
+	{"id": "auto_buy", "name": "自動強化・高速", "desc": "自動強化が、買えるだけまとめて素早く買うようになる", "max": 1, "cost": {"copper": 300, "iron": 300}, "growth": 1.0, "links": ["auto_scan"], "pos": Vector2(-224, -73), "branch": "E", "stat": "", "amt": 0.0},
 	{"id": "e1", "name": "姿勢制御", "desc": "機体の移動速度 +25%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["auto_buy"], "pos": Vector2(-350, -55), "branch": "E", "stat": "move", "amt": 0.25},
 	{"id": "blast", "name": "誘爆制御", "desc": "爆薬岩の爆発の範囲と威力が上がる", "max": 5, "cost": {"gold": 96}, "growth": 1.8, "links": ["auto_buy"], "pos": Vector2(-315, -161), "branch": "E", "stat": "", "amt": 0.0},
 	{"id": "e2", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"gold": 36}, "growth": 1.6, "links": ["e1", "blast"], "pos": Vector2(-449, -146), "branch": "E", "stat": "pow", "amt": 0.15},
@@ -120,7 +120,7 @@ const SKILLS := [
 	{"id": "y_ab", "name": "出力強化", "desc": "全ツールの威力 +15%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["a4", "b3"], "pos": Vector2(388, -535), "branch": "X", "stat": "pow", "amt": 0.15},
 	{"id": "y_cd", "name": "選鉱", "desc": "素材の入手量 +5%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["interest", "core_bonus"], "pos": Vector2(0, 661), "branch": "X", "stat": "mat", "amt": 0.05},
 	# 要石：各系統の端にある、代償つきの大きなノード。同時に付けられるのは1つだけ（外すと素材は全額戻る）
-	{"id": "k_drone", "name": "共鳴群", "desc": "採掘ドローンの威力 ×(機数×2)。ほかのツールの威力 ×0.5", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["overdrive"], "pos": Vector2(-12, -850), "branch": "A", "stat": "", "amt": 0.0, "key": true},
+	{"id": "k_drone", "name": "共鳴群", "desc": "採掘ドローン1機ごとの威力 ×機数。ほかのツールの威力 ×0.5", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["overdrive"], "pos": Vector2(-12, -850), "branch": "A", "stat": "", "amt": 0.0, "key": true},
 	{"id": "k_heavy", "name": "重機運用", "desc": "ドローン以外のツールの威力 ×5。採掘ドローンの威力 ×0.2", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["mastery"], "pos": Vector2(910, -300), "branch": "B", "stat": "", "amt": 0.0, "key": true},
 	{"id": "k_loan", "name": "先行投資", "desc": "惑星に着いたときのクレジット ×50。獲得クレジット ×0.6", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["interest", "y_cd"], "pos": Vector2(300, 680), "branch": "C", "stat": "", "amt": 0.0, "key": true},
 	{"id": "k_relic", "name": "遺物狩り", "desc": "遺物と宝箱が3倍出る（次に作られる惑星から）。素材の入手量 ×0.7", "max": 1, "cost": {"gold": 600, "crystal": 240}, "growth": 1.0, "links": ["core_bonus"], "pos": Vector2(-470, 630), "branch": "D", "stat": "", "amt": 0.0, "key": true},
@@ -162,6 +162,10 @@ var offline_gain: float = 0.0
 var offline_secs: float = 0.0
 var prev_time: float = 0.0  # 前に割った惑星の所要時間（秒）
 var respec_ready: bool = false  # 惑星を割るたびに1回、スキルを全額返却で振り直せる
+var pending_clear: bool = false  # 惑星を割って、次の惑星を選ぶ画面のまま（閉じても続きから）
+var clear_extra := {}  # その画面に出す、核の回収ボーナス
+var auto_on: bool = false  # 自動強化の入り切り（最初から使える。スキルで速くなる）
+var tips := {}  # 最初の案内で済んだもの（buy・skill・tap）
 
 ## main.gd が保存の直前に掘った跡を渡すための関数
 var hp_provider: Callable
@@ -241,6 +245,8 @@ func start_planet(p: int, t: String) -> void:
 	saved_hp = PackedFloat32Array()
 	income_rate = 0.0
 	next_traits = []
+	pending_clear = false
+	clear_extra = {}
 
 
 func trait_def(id: String = "") -> Dictionary:
@@ -317,6 +323,8 @@ func finish_planet() -> Dictionary:
 	compare_time = prev_time
 	prev_time = planet_time
 	respec_ready = true
+	pending_clear = true
+	clear_extra = extra
 	return extra
 
 
@@ -364,8 +372,10 @@ func tool_dps_at(id: String, lv: int) -> float:
 	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult()
 	if id == "drone":
 		d *= (1.0 + 0.6 * skill_level("drone_pow") + stat("dpow")) * pow(2.0, relic_count("tap"))
+		# 表示も計算も、ドローン全体の威力（1機ごとの威力 × 機数）
+		d *= drone_count()
 		if has_key("k_drone"):
-			d *= 2.0 * drone_count()
+			d *= drone_count()
 		if has_key("k_heavy"):
 			d *= 0.2
 	else:
@@ -602,6 +612,16 @@ func buy_skill(id: String) -> bool:
 	return true
 
 
+func tip_done(id: String) -> bool:
+	return bool(tips.get(id, false))
+
+
+func mark_tip(id: String) -> void:
+	if not tip_done(id):
+		tips[id] = true
+		changed.emit()
+
+
 func cost_text(cost: Dictionary) -> String:
 	var parts: PackedStringArray = []
 	for m in cost:
@@ -651,6 +671,11 @@ func save() -> void:
 	cfg.set_value("run", "time", planet_time)
 	cfg.set_value("run", "hp", saved_hp)
 	cfg.set_value("run", "income_rate", income_rate)
+	cfg.set_value("run", "pending_clear", pending_clear)
+	cfg.set_value("run", "clear_extra", clear_extra)
+	cfg.set_value("run", "next_traits", next_traits)
+	cfg.set_value("meta", "auto_on", auto_on)
+	cfg.set_value("meta", "tips", tips)
 	cfg.set_value("meta", "prev_time", prev_time)
 	cfg.set_value("meta", "respec_ready", respec_ready)
 	cfg.set_value("meta", "mats", mats)
@@ -678,6 +703,13 @@ func _load() -> void:
 	planet_time = float(cfg.get_value("run", "time", 0.0))
 	saved_hp = cfg.get_value("run", "hp", PackedFloat32Array())
 	income_rate = float(cfg.get_value("run", "income_rate", 0.0))
+	pending_clear = bool(cfg.get_value("run", "pending_clear", false))
+	clear_extra = cfg.get_value("run", "clear_extra", {})
+	next_traits = cfg.get_value("run", "next_traits", [])
+	auto_on = bool(cfg.get_value("meta", "auto_on", false))
+	tips = cfg.get_value("meta", "tips", {})
+	if not cfg.has_section_key("meta", "tips") and int(cfg.get_value("meta", "best_planet", 1)) > 1:
+		tips = {"buy": true, "skill": true, "tap": true}  # 前から遊んでいる人には最初の案内を出さない
 	prev_time = float(cfg.get_value("meta", "prev_time", 0.0))
 	respec_ready = bool(cfg.get_value("meta", "respec_ready", false))
 	var mm: Dictionary = cfg.get_value("meta", "mats", {})
@@ -691,5 +723,7 @@ func _load() -> void:
 	if t > 0.0 and away > 60.0:
 		offline_secs = minf(away, (OFFLINE_CAP_H + skill_level("offline")) * 3600.0)
 		offline_gain = income_rate * offline_secs * OFFLINE_RATE * pow(1.3, skill_level("offline"))
-		if offline_gain > 0.0:
+		if offline_gain > 0.0 and not pending_clear:
 			earn(offline_gain, false)
+		else:
+			offline_gain = 0.0
