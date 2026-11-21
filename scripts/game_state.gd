@@ -58,15 +58,23 @@ const TRAITS := [
 	{"id": "shell", "name": "硬殻惑星", "desc": "硬い岩が多いが、鉱物も多い", "rates": {B.HARD: 3.0, B.IRON: 1.5, B.COPPER: 1.5, B.GOLD: 1.5}},
 ]
 
-## 遺物：ブロックの中に眠っていて、砕くとその惑星の間だけ効果が出る（ランダム）
+## 遺物：ブロックの中に眠っていて、掘り当てると3つの候補から1つを選ぶ。効果はその惑星の間だけ。
+## 同じ遺物を重ねたときは足し算で効く（2個目で ×1.5 → ×2.0）。
 const RELICS := [
-	{"id": "power", "name": "古代の動力炉", "desc": "全ツールの威力 ×1.5"},
-	{"id": "cr", "name": "黄金の秤", "desc": "獲得クレジット ×1.5"},
-	{"id": "drone", "name": "眠れる無人機", "desc": "採掘ドローン +2機（1機ごとに同じ威力で掘る）"},
-	{"id": "tap", "name": "精密照準器", "desc": "採掘ドローンの威力 ×2"},
+	{"id": "power", "name": "古代の動力炉", "desc": "全ツールの威力 +50%"},
+	{"id": "cr", "name": "黄金の秤", "desc": "獲得クレジット +50%"},
+	{"id": "drone", "name": "眠れる無人機", "desc": "採掘ドローン +1機"},
+	{"id": "tap", "name": "精密照準器", "desc": "採掘ドローンの威力 +100%"},
 	{"id": "cost", "name": "商人の印章", "desc": "ツールの強化費用 -15%"},
-	{"id": "mat", "name": "鉱脈の羅針盤", "desc": "素材の入手量 ×1.3"},
+	{"id": "mat", "name": "鉱脈の羅針盤", "desc": "素材の入手量 +30%"},
+	{"id": "blast", "name": "爆鳴の欠片", "desc": "爆薬岩の爆発が1マス広く、威力 +100%"},
+	{"id": "hard", "name": "硬岩の心臓", "desc": "硬い岩を砕くと、鉄が3つ出る"},
+	{"id": "deep", "name": "深層の羅針", "desc": "深さの半分より下のマスへの威力 +100%"},
+	{"id": "hoard", "name": "宝の嗅覚", "desc": "宝箱を開けると、30%の確率で遺物も見つかる"},
 ]
+const RELIC_CHOICES := 3
+const RELIC_COLOR := Color("#E070D8")  # 遺物はマゼンタ（遺物ボタンと同じ）
+const CACHE_COLOR := Color("#F2E05A")  # 宝箱は黄色
 
 ## スキルマップ。基地から5つの系統が放射状に広がり、系統のあいだも橋でつながる網の目。
 ## links のどれか（逆向きも含む）が Lv1 以上なら習得できる。pos はマップ上の座標。
@@ -273,7 +281,7 @@ func cell_value(depth: float) -> float:
 
 
 func cr_mult() -> float:
-	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * pow(1.5, relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0)
+	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * (1.0 + 0.5 * relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0)
 
 
 func earn(amount: float, track: bool = true) -> void:
@@ -283,7 +291,7 @@ func earn(amount: float, track: bool = true) -> void:
 
 
 func mat_mult() -> float:
-	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * pow(1.3, relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0)
+	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * (1.0 + 0.3 * relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0)
 
 
 func add_mat(m: String, amount: float) -> float:
@@ -299,11 +307,26 @@ func relic_count(id: String) -> int:
 	return relics.count(id)
 
 
-func add_random_relic() -> Dictionary:
-	var r: Dictionary = RELICS[randi() % RELICS.size()]
-	relics.append(String(r["id"]))
+func relic_def(id: String) -> Dictionary:
+	for r in RELICS:
+		if r["id"] == id:
+			return r
+	return RELICS[0]
+
+
+## 掘り当てた遺物の候補（重ならない3つ）
+func roll_relic_choices() -> Array:
+	var pool: Array = []
+	for r in RELICS:
+		pool.append(String(r["id"]))
+	pool.shuffle()
+	return pool.slice(0, RELIC_CHOICES)
+
+
+func add_relic(id: String) -> Dictionary:
+	relics.append(id)
 	changed.emit()
-	return r
+	return relic_def(id)
 
 
 func relic_luck() -> float:
@@ -358,7 +381,7 @@ func tool_level(id: String) -> int:
 
 
 func dps_mult() -> float:
-	return pow(1.45, skill_level("resonance")) * (1.0 + stat("pow")) * pow(2.5, skill_level("overdrive")) * pow(1.5, relic_count("power"))
+	return pow(1.45, skill_level("resonance")) * (1.0 + stat("pow")) * pow(2.5, skill_level("overdrive")) * (1.0 + 0.5 * relic_count("power"))
 
 
 func milestone_mult() -> float:
@@ -371,7 +394,7 @@ func tool_dps_at(id: String, lv: int) -> float:
 	var t := tool_def(id)
 	var d := float(t["dps"]) * lv * pow(milestone_mult(), lv / 25) * dps_mult()
 	if id == "drone":
-		d *= (1.0 + 0.6 * skill_level("drone_pow") + stat("dpow")) * pow(2.0, relic_count("tap"))
+		d *= (1.0 + 0.6 * skill_level("drone_pow") + stat("dpow")) * (1.0 + 1.0 * relic_count("tap"))
 		# 表示も計算も、ドローン全体の威力（1機ごとの威力 × 機数）
 		d *= drone_count()
 		if has_key("k_drone"):
@@ -448,7 +471,7 @@ func scan_radius() -> int:
 
 
 func drone_count() -> int:
-	return 1 + skill_level("drone_count") + 2 * relic_count("drone")
+	return 1 + skill_level("drone_count") + relic_count("drone")
 
 
 # ---------------------------------------------------------------- スキルツリー

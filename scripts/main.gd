@@ -42,6 +42,10 @@ var _dwell: float = 0.0  # 今の場所に着いてからの時間
 var _speed: float = 0.0
 var bot := false  # 確認用の自動プレイ（--bot）。強化とスキルを自動で買い、惑星を割ったら次へ進む
 var _bot_t: float = 0.0
+var _intro: float = 0.0  # 着陸の演出の残り秒数（惑星全体から寄っていく）
+const INTRO := 1.8
+var _outro: float = -1.0  # 惑星を割った後、全体まで引いていく演出の経過秒数（-1 はなし）
+var _hunt_auto := false  # 透視スキャンで自動的に遺物を掘りに行っている
 
 
 func _ready() -> void:
@@ -70,6 +74,7 @@ func _ready() -> void:
 
 	planet.cell_broken.connect(_on_cell_broken)
 	planet.cleared.connect(_on_cleared)
+	planet.relic_lost.connect(_on_relic_lost)
 	GameState.hp_provider = func() -> PackedFloat32Array: return planet.hp
 
 	if touch_ui:
@@ -108,6 +113,10 @@ func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 		planet.restore(saved)
 	tools.reset_for(planet)
 	_zoom = 0.0
+	planet.modulate = Color.WHITE
+	_outro = -1.0
+	_intro = 0.0 if gs.pending_clear else INTRO
+	_hunt_auto = false
 	var top := planet.surface_cell(-PI * 0.5 + randf_range(-0.6, 0.6))
 	focus = planet.hover_point(top, Planet.CELL) if top >= 0 else planet.position
 	_focus_goal = focus
@@ -143,6 +152,11 @@ func _process(delta: float) -> void:
 		if _bot_t >= 30.0:
 			_bot_t = 0.0
 			gs.buy_all_skills()
+			# 近くに気配があれば、プレイヤーのようにタップして掘りに行く
+			var hb := planet.buried_near(focus, Planet.SIGNAL_R)
+			if hb >= 0 and planet.hunt_cell < 0 and not planet.is_exposed(hb):
+				set_destination(planet.cell_center(hb))
+				print("[bot] hunt cell %d (%s)" % [hb, "relic" if int(planet.block[hb]) == gs.B.RELIC else "cache"])
 			print("[bot] planet %d t=%.0fs prog=%.1f%% hp=%.1f%% dps=%s rate=%s cr=%s" % [gs.planet, gs.planet_time, 100.0 * planet.progress(), 100.0 * planet.hp_progress(), gs.fmt(gs.total_dps()), gs.fmt(planet.damage_rate), gs.fmt(gs.credits)])
 	_pop_t -= delta
 	if _pop_t <= 0.0 and _pop_acc > 0.0:
@@ -169,12 +183,25 @@ func _update_focus(delta: float) -> void:
 	var arrived := focus.distance_to(_focus_goal) < Planet.CELL
 	if arrived:
 		_dwell += delta
+	planet.signal_pos = focus
 	_focus_t -= delta
 	if _focus_t <= 0.0:
 		_focus_t = 0.5
-		if _manual and arrived and planet.targets_near(focus, 6).is_empty():
+		if planet.hunt_cell >= 0:
+			# 遺物を掘りに行っている間は、その遺物に一番近い掘り口の前へ移っていく
+			var front := planet.hunt_front()
+			if front < 0:
+				planet.hunt_cell = -1
+				_manual = false
+				_hunt_auto = false
+			else:
+				var g := planet.hover_point(front, Planet.CELL)
+				if g.distance_to(_focus_goal) > Planet.CELL * 0.5:
+					_focus_goal = g
+					tools.rescan()
+		elif _manual and arrived and planet.targets_near(focus, 6).is_empty():
 			_manual = false
-		if not _manual:
+		if not _manual and planet.hunt_cell < 0:
 			_pick_auto_goal(arrived)
 	var goal_sp := 70.0 if _manual else clampf(focus.distance_to(_focus_goal) * 0.8, 18.0, AUTO_SPEED_MAX)
 	_speed = move_toward(_speed, goal_sp, 160.0 * delta)
@@ -190,6 +217,13 @@ func _update_focus(delta: float) -> void:
 ## 周りを掘り尽くしたときに移る。
 func _pick_auto_goal(arrived: bool) -> void:
 	var gs := GameState
+	# 透視スキャンがあれば、近くに埋まった遺物・宝箱を自分で掘りに行く
+	if gs.skill_level("vision") > 0:
+		var b := planet.buried_near(focus, float(gs.scan_radius()))
+		if b >= 0 and not planet.is_exposed(b):
+			planet.hunt_cell = b
+			_hunt_auto = true
+			return
 	var near := planet.targets_near(_focus_goal, 6)
 	var t := planet.targets_near(focus, gs.scan_radius(), 0.6)
 	if near.is_empty():
@@ -230,15 +264,35 @@ func heading() -> Dictionary:
 
 
 ## 惑星の一部だけが大きく映るよう、狙いの中心にカメラを寄せる。
+## 掘るほど少しずつ引いていく（20マス → 28マス）。着陸のときは惑星全体から寄り、割った後は全体まで引く。
 func _fit_camera(delta: float) -> void:
 	var area: Rect2 = hud.planet_area()
-	var target := minf(area.size.x, area.size.y) / (VIEW_CELLS * Planet.CELL)
-	_zoom = target if _zoom <= 0.0 else lerpf(_zoom, target, clampf(delta * 3.0, 0.0, 1.0))
+	var short := minf(area.size.x, area.size.y)
+	var cells := VIEW_CELLS + 8.0 * planet.progress()
+	var center := view_point()
+	var whole := (planet.radius_cells * 2.0 + 6.0)
+	var direct := false
+	if _intro > 0.0:
+		_intro = maxf(0.0, _intro - delta)
+		var k := 1.0 - _intro / INTRO
+		k = k * k * (3.0 - 2.0 * k)
+		cells = lerpf(whole, cells, k)
+		center = planet.position.lerp(center, k)
+		direct = true
+	elif _outro >= 0.0:
+		_outro += delta
+		var k := clampf(_outro / 1.2, 0.0, 1.0)
+		k = k * k * (3.0 - 2.0 * k)
+		cells = lerpf(cells, whole * 1.4, k)
+		center = center.lerp(planet.position, k)
+		direct = true
+	var target := short / (cells * Planet.CELL)
+	_zoom = target if _zoom <= 0.0 or direct else lerpf(_zoom, target, clampf(delta * 3.0, 0.0, 1.0))
 	camera.zoom = Vector2(_zoom, _zoom)
 	Fx.view_scale = 1.0 / _zoom
 	var vp := get_viewport().get_visible_rect().size
-	var goal := view_point() - (area.get_center() - vp * 0.5) / _zoom
-	camera.position = goal if camera.position == Vector2.ZERO else camera.position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0))
+	var goal := center - (area.get_center() - vp * 0.5) / _zoom
+	camera.position = goal if camera.position == Vector2.ZERO or direct else camera.position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0))
 	# 画面の揺れ
 	_shake = maxf(0.0, _shake - delta * 18.0)
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake / _zoom * 2.0
@@ -262,6 +316,7 @@ func _auto_buy() -> bool:
 			best = id
 			best_c = c
 	if best != "" and best_c <= gs.credits:
+		gs.mark_tip("buy")
 		return gs.buy_tool(best)
 	return false
 
@@ -296,14 +351,8 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		else:
 			Audio.play("ore_metal")
 	elif b == gs.B.RELIC:
-		var r := gs.add_random_relic()
-		Fx.burst(fx_layer, pos, Neon.CYAN, 30, 220.0)
-		Fx.sparks(fx_layer, pos, Neon.CYAN, 20, 160.0)
-		Fx.ring(fx_layer, pos, Neon.CYAN, Planet.CELL * 8.0)
-		Fx.flash(fx_layer, pos, Neon.CYAN, Planet.CELL * 3.0, 0.6)
-		_absorb(pos, Neon.CYAN, 8)
-		Audio.play("relic")
-		hud.relic_found(r)
+		_relic_fx(pos)
+		hud.offer_relics(gs.roll_relic_choices())
 	elif b == gs.B.CACHE:
 		var cr := gs.cell_value(planet.depth[planet.cell_at(pos)] if planet.cell_at(pos) >= 0 else 0.0) * 80.0
 		gs.earn(cr)
@@ -316,8 +365,34 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		_absorb(pos, Neon.YELLOW, 8)
 		Audio.play("cache")
 		Fx.popup(fx_layer, pos, "宝箱！ +%s CR・%s +%s" % [gs.fmt(cr), gs.MAT_NAMES[mm], gs.fmt(got)], Neon.YELLOW)
+		if randf() < 0.3 * gs.relic_count("hoard"):
+			_relic_fx(pos)
+			hud.offer_relics(gs.roll_relic_choices())
+	elif b == gs.B.HARD and gs.relic_count("hard") > 0:
+		var got := gs.add_mat("iron", _mat_amount() * 3.0 * gs.relic_count("hard"))
+		var e: Array = _mat_pop.get("iron", [0.0, pos])
+		_mat_pop["iron"] = [float(e[0]) + got, pos]
+		Audio.play("break")
 	else:
 		Audio.play("break")
+
+
+func _relic_fx(pos: Vector2) -> void:
+	var c: Color = GameState.RELIC_COLOR
+	Fx.burst(fx_layer, pos, c, 30, 220.0)
+	Fx.sparks(fx_layer, pos, c, 20, 160.0)
+	Fx.ring(fx_layer, pos, c, Planet.CELL * 8.0)
+	Fx.flash(fx_layer, pos, c, Planet.CELL * 3.0, 0.6)
+	_absorb(pos, c, 8)
+	Audio.play("relic")
+
+
+## 埋まったままの遺物・宝箱が爆発に巻き込まれて壊れた
+func _on_relic_lost(pos: Vector2, b: int) -> void:
+	var gs := GameState
+	var is_relic := b == gs.B.RELIC
+	Fx.burst(fx_layer, pos, Neon.MUTED, 16, 120.0)
+	Fx.popup(fx_layer, pos, "遺物が爆発で壊れた…" if is_relic else "宝箱が爆発で壊れた…", Neon.RED)
 
 
 ## 砕いた所から母艦へ、光の粒が吸い込まれる（数値は砕いた瞬間に入っている。見た目だけ）
@@ -347,7 +422,14 @@ func _on_cleared() -> void:
 	Fx.popup(fx_layer, focus, "惑星を破壊！", Neon.YELLOW)
 	Audio.play("clear")
 	shake(12.0)
-	await get_tree().create_timer(1.2).timeout
+	# 全体まで引いて、残った塊が外へ飛び散る
+	_outro = 0.0
+	planet.hunt_cell = -1
+	await get_tree().create_timer(1.0).timeout
+	_shatter()
+	var tw := create_tween()
+	tw.tween_property(planet, "modulate", Color(1, 1, 1, 0.08), 1.2)
+	await get_tree().create_timer(1.6).timeout
 	get_tree().paused = true
 	hud.show_clear(extra, gs.roll_next_traits())
 	gs.save()
@@ -355,6 +437,25 @@ func _on_cleared() -> void:
 		print("[bot] CLEAR planet %d in %.1f min" % [gs.planet, gs.planet_time / 60.0])
 		gs.buy_all_skills()
 		go_next(String(gs.next_traits[0]))
+
+
+## 割れた惑星の残りが、中心から外へ飛び散る（残ったマスから最大90か所）
+func _shatter() -> void:
+	var gs := GameState
+	var alive: Array = []
+	for i in planet.hp.size():
+		if planet.hp[i] > 0.0:
+			alive.append(i)
+	alive.shuffle()
+	for k in mini(90, alive.size()):
+		var i: int = alive[k]
+		var b := int(planet.block[i])
+		var col: Color = gs.BLOCK_COLORS.get(b, Neon.LINE)
+		Fx.burst(fx_layer, planet.cell_center(i), col, 3, 260.0 + 200.0 * planet.depth[i])
+	Fx.ring(fx_layer, planet.position, Neon.LINE, planet.world_radius() * 1.6, 1.0)
+	Fx.flash(fx_layer, planet.position, Neon.YELLOW, planet.world_radius() * 0.6, 0.8)
+	Audio.play("blast")
+	shake(10.0)
 
 
 func go_next(trait_id: String) -> void:
@@ -373,6 +474,20 @@ func set_destination(world_pos: Vector2) -> void:
 	if GameState.has_key("k_drift"):
 		hud.toast("無人航行中は、移動先を決められない")
 		return
+	# 埋まった遺物・宝箱の気配の近くをタップしたら、それを掘りに行く
+	var hb := planet.buried_near(world_pos, 3.0)
+	if hb >= 0 and not planet.is_exposed(hb):
+		planet.hunt_cell = hb
+		_hunt_auto = false
+		_manual = true
+		GameState.mark_tip("tap")
+		GameState.mark_tip("hunt")
+		_focus_t = 0.0
+		tools.tap_effect(planet.cell_center(hb))
+		Audio.play("move")
+		hud.toast("遺物の気配を掘りに行く" if int(planet.block[hb]) == GameState.B.RELIC else "宝箱の気配を掘りに行く")
+		return
+	planet.hunt_cell = -1
 	_focus_goal = planet.nearest_open(world_pos)
 	# 何もない宇宙を指したときは、その真下の地表へ降りる
 	if planet.targets_near(_focus_goal, 6).is_empty():
