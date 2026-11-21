@@ -74,9 +74,12 @@ scripts/hud.gd          画面表示、ツール一覧、スキルマップ・�
 scripts/skill_map.gd    スキルマップの描画と操作（ドラッグ・拡大縮小・選択）
 scripts/audio.gd        Autoload。BGM のループと効果音（間引き・音程のゆらぎ・オンオフ）
 scripts/backdrop.gd     背景（地模様・星雲・視差のある星）
-scripts/fx.gd           演出（破片・火花・発光・衝撃波・爆発アニメ・数値ポップ）
+scripts/fx.gd           演出（回る破片・光の筋の火花・砕けた瞬間の閃き・爆発の芯・衝撃波・弾む数値ポップ・尾を引く回収の粒）
+scripts/impact_fx.gd    画面の衝撃波の歪み・色ずれ・閃光（大きな出来事の一瞬だけ表示）
+scripts/screen_fx.gd    Autoload。走査線と周辺減光、ヒットストップ（遺物・宝箱・惑星の破壊で一瞬だけ時間を止める）
 scripts/neon.gd         見た目の決まりごと（色・線・にじみ・線のアイコン）を一か所に
 scripts/bracket_box.gd  角かっこ付きのボタンの枠
 shaders/cells.gdshader  惑星を平らな塗りと白い階段状の輪郭線で描くシェーダー
+shaders/impact.gdshader 衝撃波の歪み・色ずれ・閃光（impact_fx.gd が使う）
 assets/                 音（素材の出どころは CREDITS.md）
 ```
