@@ -26,6 +26,12 @@ var _auto_btn: Button
 var _goal: Label
 var _goal_kind: String = ""
 var _pulse_t: float = 0.0
+var _relic_card: PanelContainer
+var _relic_title: Label
+var _relic_row: HBoxContainer
+var _relic_queue: Array = []  # まだ選んでいない遺物の候補（[id, id, id] の並び）
+var _relic_time: float = 0.0
+const RELIC_WAIT := 20.0  # この秒数のうちに選ばなければ、左の候補を自動で選ぶ
 var _buy_mode: int = 0
 var _panels: Array = []
 var _backdrops: Array = []
@@ -104,6 +110,25 @@ func _ready() -> void:
 	gsb.content_margin_bottom = 5
 	_goal.add_theme_stylebox_override("normal", gsb)
 	_goal.add_theme_color_override("font_color", Neon.LIME)
+
+	# 遺物の3択：惑星エリアの下に出る札。ゲームは止めない
+	_relic_card = PanelContainer.new()
+	_relic_card.theme = _theme
+	var rsb := _box(Color(0, 0, 0, 0.92), GameState.RELIC_COLOR, 1)
+	rsb.set_content_margin_all(8)
+	_relic_card.add_theme_stylebox_override("panel", rsb)
+	_relic_card.visible = false
+	add_child(_relic_card)
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 6)
+	_relic_card.add_child(rv)
+	_relic_title = Label.new()
+	Neon.plain_text(_relic_title, 14, GameState.RELIC_COLOR)
+	_relic_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rv.add_child(_relic_title)
+	_relic_row = HBoxContainer.new()
+	_relic_row.add_theme_constant_override("separation", 6)
+	rv.add_child(_relic_row)
 
 	_tree_panel = _make_panel()
 	_tree_box = _panel_box(_tree_panel)
@@ -336,7 +361,47 @@ func banner(title: String, sub: String) -> void:
 
 
 func relic_found(r: Dictionary) -> void:
-	banner("遺物を発見：%s" % r["name"], String(r["desc"]))
+	banner("遺物を得た：%s" % r["name"], String(r["desc"]))
+
+
+## 掘り当てた遺物の候補を出す。前の候補が残っていれば、その後に並ぶ。
+func offer_relics(ids: Array) -> void:
+	if main != null and bool(main.bot):
+		print("[bot] relic %s" % ids[0])
+		relic_found(GameState.add_relic(String(ids[0])))
+		return
+	_relic_queue.append(ids)
+	if not _relic_card.visible:
+		_show_relic_card()
+
+
+func _show_relic_card() -> void:
+	if _relic_queue.is_empty():
+		_relic_card.visible = false
+		return
+	var ids: Array = _relic_queue[0]
+	_relic_time = RELIC_WAIT
+	for c in _relic_row.get_children():
+		_relic_row.remove_child(c)
+		c.queue_free()
+	for id in ids:
+		var rd := GameState.relic_def(String(id))
+		var b := _button("%s\n%s" % [rd["name"], rd["desc"]], Vector2(0, 64), 13)
+		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.pressed.connect(_pick_relic.bind(String(id)))
+		_relic_row.add_child(b)
+	_relic_card.visible = true
+
+
+func _pick_relic(id: String) -> void:
+	if _relic_queue.is_empty():
+		return
+	_relic_queue.pop_front()
+	var r := GameState.add_relic(id)
+	relic_found(r)
+	_relic_card.visible = false
+	_show_relic_card.call_deferred()
 
 
 # ---------------------------------------------------------------- ツール一覧
@@ -588,6 +653,10 @@ func _goal_text() -> String:
 	if not gs.tip_done("tap") and gs.planet_time > 45.0:
 		_goal_kind = "tap"
 		return "▶ 惑星をタップすると、母艦がそこへ移動して掘る"
+	if not gs.tip_done("hunt") and main != null:
+		var hb: int = main.planet.buried_near(main.focus, Planet.SIGNAL_R)
+		if hb >= 0 and not main.planet.is_exposed(hb):
+			return "▶ 広がる輪は、埋まった遺物の気配。タップすると掘りに行く"
 	for td in gs.TOOLS:
 		var id := String(td["id"])
 		if not gs.tool_unlocked(id):
@@ -650,6 +719,8 @@ func _layout() -> void:
 	_toast.size = Vector2(area.size.x - 40.0, 0)
 	_toast.position = Vector2(area.position.x + 20.0, area.end.y - 64.0)
 	# 左のボタン列と右上の地図のあいだに収める
+	_relic_card.size = Vector2(minf(area.size.x - 20.0, 520.0), 0)
+	_relic_card.position = Vector2(area.position.x + (area.size.x - _relic_card.size.x) * 0.5, area.end.y - _relic_card.get_combined_minimum_size().y - 8.0)
 	_goal.size = Vector2(maxf(160.0, area.size.x - 66.0 - 106.0), 0)
 	_goal.position = Vector2(area.position.x + 66.0, area.position.y + 6.0)
 	_banner.size = Vector2(area.size.x - 40.0, 0)
@@ -667,6 +738,12 @@ func _process(delta: float) -> void:
 	_rate_label.text = "+%s CR/秒 ・ 採掘力 %s/秒" % [gs.fmt(gs.income_rate), gs.fmt(gs.total_dps())]
 	_pulse_t += delta / maxf(Engine.time_scale, 0.01)
 	_goal.text = _goal_text()
+	if _relic_card.visible and not get_tree().paused:
+		_relic_time -= delta
+		_relic_title.text = "遺物を掘り当てた！1つ選ぶ（%d秒で左を自動で選ぶ）" % int(ceil(maxf(0.0, _relic_time)))
+		if _relic_time <= 0.0 and not _relic_queue.is_empty():
+			_pick_relic(String((_relic_queue[0] as Array)[0]))
+	_relic_card.visible = not _relic_queue.is_empty() and not any_panel()
 	_goal.visible = not any_panel()
 	var want_pulse := _goal_kind == "skill"
 	if want_pulse != bool(_skill_btn.get_meta("pulse", false)) or want_pulse:
@@ -999,7 +1076,7 @@ func _open_relics() -> void:
 	var gs := GameState
 	_title(_msg_box, "この惑星で見つけた遺物", 22)
 	if gs.relics.is_empty():
-		_title(_msg_box, "まだ無し。岩の中に埋まっていて、掘り当てると光る。\n効果はこの惑星にいる間だけ続く", 15, Color(1, 1, 1, 0.75))
+		_title(_msg_box, "まだ無し。岩の中に埋まっていて、母艦が近づくと気配（広がる輪）が見える。\n気配をタップすると掘りに行く。掘り当てると3つから1つ選べる。\n爆薬岩の爆発に巻き込まれると壊れる。効果はこの惑星にいる間だけ続く", 15, Color(1, 1, 1, 0.75))
 	else:
 		var counts := {}
 		for r in gs.relics:
@@ -1007,7 +1084,7 @@ func _open_relics() -> void:
 		for rd in gs.RELICS:
 			var id := String(rd["id"])
 			if counts.has(id):
-				_title(_msg_box, "%s ×%d\n%s" % [rd["name"], counts[id], rd["desc"]], 15, Neon.CYAN)
+				_title(_msg_box, "%s ×%d\n%s" % [rd["name"], counts[id], rd["desc"]], 15, GameState.RELIC_COLOR)
 	var tr := gs.trait_def()
 	_title(_msg_box, "惑星の特性：%s（%s）" % [tr["name"], tr["desc"]], 14, Neon.ORANGE)
 	var back := _wide(_msg_box, "閉じる", 48, 17)

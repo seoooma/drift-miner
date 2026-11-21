@@ -6,6 +6,7 @@ extends Node2D
 
 signal cell_broken(world_pos: Vector2, value: float, block: int)
 signal cleared
+signal relic_lost(world_pos: Vector2, block: int)  # 埋まった遺物・宝箱が爆発に巻き込まれて壊れた
 
 const CELL := 8.0
 const RADIUS := 56
@@ -45,6 +46,10 @@ var damage_rate: float = 0.0  # 実際に岩に入っている毎秒のダメー
 var _rem_t: float = 0.0
 var remaining_hp: float = 0.0  # クリアまでに削る必要のある耐久の合計（2秒ごとに計算）
 var cleared_hp: float = 0.0  # これまでに削った耐久（クリアに必要な分のうち）
+var hunt_cell: int = -1  # プレイヤーが掘りに行くと決めた、埋まった遺物・宝箱（なければ -1）
+var signal_pos := Vector2.INF  # ここから SIGNAL_R マス以内の埋まった遺物・宝箱は「気配」が見える
+const SIGNAL_R := 12.0
+var _exploding := false
 var _need_total: float = 0.0  # クリアに必要な耐久の合計（作ったときの値）
 
 
@@ -75,6 +80,7 @@ func generate(seed_value: int, trait_rates: Dictionary) -> void:
 	buried.clear()
 	alive_count = 0
 	done = false
+	hunt_cell = -1
 	_need_total = 0.0
 	remaining_hp = 0.0
 	damage_rate = 0.0
@@ -513,6 +519,8 @@ func random_surface_cell() -> int:
 func hit(i: int, damage: float) -> bool:
 	if not is_alive(i) or done:
 		return false
+	if depth[i] > 0.5 and GameState.relic_count("deep") > 0:
+		damage *= 1.0 + GameState.relic_count("deep")
 	_dealt += minf(damage, hp[i])
 	hp[i] -= damage
 	var x := i % size
@@ -524,6 +532,10 @@ func hit(i: int, damage: float) -> bool:
 		_dirty = true
 		_open_cell(i)
 		var b := int(block[i])
+		if _exploding and (b == GameState.B.RELIC or b == GameState.B.CACHE):
+			# 埋まったまま爆発に巻き込まれた遺物・宝箱は壊れて、ただの岩になる
+			relic_lost.emit(cell_center(i), b)
+			b = GameState.B.ROCK
 		var v := GameState.cell_value(depth[i]) * float(GameState.BLOCKS[b]["value"])
 		cell_broken.emit(cell_center(i), v, b)
 		if b == GameState.B.VOLATILE:
@@ -541,8 +553,9 @@ func hit(i: int, damage: float) -> bool:
 ## 爆薬岩：周りのマスに大きなダメージ（連鎖する）
 func _explode(i: int) -> void:
 	var lv := GameState.skill_level("blast")
-	var r := CELL * (2.5 + 0.5 * lv)
-	var dmg := max_hp[i] * 5.0 * (1.0 + 0.5 * lv)
+	var rb := GameState.relic_count("blast")
+	var r := CELL * (2.5 + 0.5 * lv + rb)
+	var dmg := max_hp[i] * 5.0 * (1.0 + 0.5 * lv) * (1.0 + rb)
 	var c := cell_center(i)
 	call_deferred("_explode_at", c, r, dmg)
 
@@ -562,7 +575,9 @@ func _explode_at(c: Vector2, r: float, dmg: float) -> void:
 				continue
 			var j := y * size + x
 			if is_alive(j) and cell_center(j).distance_to(c) <= r:
+				_exploding = true
 				hit(j, dmg)
+				_exploding = false
 	var main := get_parent()
 	if main != null and main.has_method("on_explosion"):
 		main.on_explosion(c, r)
@@ -634,7 +649,7 @@ func targets_near(p: Vector2, r: int, dist_w: float = 1.0) -> Array:
 			var d := Vector2(x - cx, y - cy).length()
 			if d > r:
 				continue
-			scored.append([priority(i) * 3.0 - d * dist_w - depth[i] * DEPTH_W, i])
+			scored.append([score_at(i, d, dist_w), i])
 	scored.sort_custom(func(a, b): return a[0] > b[0])
 	var out: Array = []
 	for e in scored:
@@ -644,7 +659,54 @@ func targets_near(p: Vector2, r: int, dist_w: float = 1.0) -> Array:
 
 ## マス i の「狙う点数」（targets_near と同じ式）。p から近く、価値が高く、浅いほど高い。
 func score(i: int, p: Vector2, dist_w: float = 1.0) -> float:
-	return priority(i) * 3.0 - cell_center(i).distance_to(p) / CELL * dist_w - depth[i] * DEPTH_W
+	return score_at(i, cell_center(i).distance_to(p) / CELL, dist_w)
+
+
+## d はマス単位の距離。遺物を掘りに行っている間は、深さを気にせず、その遺物に近いマスほど先に削る。
+func score_at(i: int, d: float, dist_w: float) -> float:
+	if hunt_cell >= 0 and is_alive(hunt_cell):
+		return priority(i) * 3.0 - d * dist_w * 0.3 - cell_center(i).distance_to(cell_center(hunt_cell)) / CELL * 4.0
+	return priority(i) * 3.0 - d * dist_w - depth[i] * DEPTH_W
+
+
+## 掘りに行っている遺物へ一番近い、外に面したマス（なければ -1）
+func hunt_front() -> int:
+	if hunt_cell < 0 or not is_alive(hunt_cell):
+		return -1
+	if is_exposed(hunt_cell):
+		return hunt_cell
+	var hx := hunt_cell % size
+	var hy := hunt_cell / size
+	var best := -1
+	var bd := INF
+	for r in range(1, size):
+		for y in range(maxi(0, hy - r), mini(size, hy + r + 1)):
+			for x in range(maxi(0, hx - r), mini(size, hx + r + 1)):
+				if absi(x - hx) != r and absi(y - hy) != r:
+					continue
+				var i := y * size + x
+				if hp[i] > 0.0 and is_exposed(i):
+					var d := Vector2(x - hx, y - hy).length()
+					if d < bd:
+						bd = d
+						best = i
+		if best >= 0:
+			return best
+	return -1
+
+
+## p の近く（r マス以内）に埋まっている遺物・宝箱（なければ -1）
+func buried_near(p: Vector2, r: float) -> int:
+	var best := -1
+	var bd := r * CELL
+	for i in buried:
+		if hp[i] <= 0.0:
+			continue
+		var d := cell_center(i).distance_to(p)
+		if d <= bd:
+			bd = d
+			best = i
+	return best
 
 
 ## 惑星の中心から外向きの向き（そのマスの「空」の方向）
@@ -743,7 +805,9 @@ func _draw() -> void:
 	pass
 
 
-## 表面に出てきた遺物・宝箱は四角い枠で点滅する（透視スキャンがあれば埋まっていても見える）
+## 遺物（マゼンタ）と宝箱（黄）。表面に出てきたものは四角い枠で点滅する。
+## 埋まっているものは、母艦の近く（SIGNAL_R マス以内）にあると、広がる輪の「気配」が見える。
+## 透視スキャンがあれば、遠くても枠が薄く見える。掘りに行っている遺物には、二重の枠を出す。
 func _draw_marks() -> void:
 	var see_all := GameState.skill_level("vision") > 0
 	var blink := 0.5 + 0.5 * sin(_t * 5.0)
@@ -752,11 +816,20 @@ func _draw_marks() -> void:
 		if hp[i] <= 0.0:
 			continue
 		var exposed := is_exposed(i)
-		if not see_all and not exposed:
-			continue
 		var p := cell_center(i) - position
 		var is_relic: bool = int(block[i]) == GameState.B.RELIC
-		var col := Neon.CYAN if is_relic else Neon.ORANGE
+		var col: Color = GameState.RELIC_COLOR if is_relic else GameState.CACHE_COLOR
+		var near := signal_pos != Vector2.INF and cell_center(i).distance_to(signal_pos) <= SIGNAL_R * CELL
+		if not exposed and (near or i == hunt_cell):
+			# 気配：マスの中心から広がって消える輪（マスごとに時間をずらす）
+			var ph := fmod(_t * 0.6 + float(i % 97) * 0.13, 1.0)
+			_marks.draw_arc(p, CELL * (0.3 + 1.6 * ph), 0.0, TAU, 24, Color(col, 0.55 * (1.0 - ph)), px * 1.5)
+			_marks.draw_circle(p, px * 2.0, Color(col, 0.5 + 0.4 * blink))
+		if i == hunt_cell:
+			var hr := Rect2(p - Vector2(CELL, CELL), Vector2(CELL, CELL) * 2.0)
+			_marks.draw_rect(hr, Color(col, 0.5 + 0.5 * blink), false, px * 1.5)
+		if not see_all and not exposed:
+			continue
 		var a := (0.5 + 0.5 * blink) * (1.0 if exposed else 0.45)
 		var r := Rect2(p - Vector2(CELL, CELL) * 0.5, Vector2(CELL, CELL)).grow(-px)
 		_marks.draw_rect(r, Color(col, 0.18 * a))
