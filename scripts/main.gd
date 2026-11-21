@@ -76,6 +76,7 @@ func _ready() -> void:
 	planet.cleared.connect(_on_cleared)
 	planet.relic_lost.connect(_on_relic_lost)
 	GameState.hp_provider = func() -> PackedFloat32Array: return planet.hp
+	GameState.rate_provider = func() -> float: return planet.damage_rate
 
 	if touch_ui:
 		get_tree().root.size_changed.connect(_apply_mobile_scale)
@@ -86,8 +87,37 @@ func _ready() -> void:
 		get_tree().paused = true
 		var nx: Array = GameState.next_traits if not GameState.next_traits.is_empty() else GameState.roll_next_traits()
 		hud.show_clear(GameState.clear_extra, nx)
-	elif GameState.offline_gain > 0.0:
-		hud.show_offline(GameState.offline_gain, GameState.offline_secs)
+	elif GameState.offline_secs > 0.0:
+		_offline_dig(GameState.offline_secs)
+	if "--galaxy" in OS.get_cmdline_user_args():
+		hud.call_deferred("_open_galaxy")  # 確認用：星系の画面を開いた状態で始める
+
+
+## 閉じていた間も、保存したときのペースで実際に掘り進める（上限10時間＋スキル）。
+## 削った跡はそのまま惑星に残り、クリアに届いていれば戻った直後に割れる。
+func _offline_dig(secs: float) -> void:
+	var gs := GameState
+	gs.offline_secs = 0.0
+	if gs.damage_rate_saved <= 0.0 or planet.done:
+		return
+	var before := planet.hp_progress()
+	var budget := gs.damage_rate_saved * secs * gs.offline_eff()
+	var r := planet.offline_dig(budget)
+	gs.offline_used = true
+	var cr := float(r["cr"])
+	gs.earn(cr, false)
+	var got := {}
+	var ores: Dictionary = r["ores"]
+	for b in ores:
+		var m := String(gs.BLOCKS[b]["mat"])
+		got[m] = float(got.get(m, 0.0)) + gs.add_mat(m, _mat_amount() * int(ores[b]))
+	hud.show_offline(secs, before, planet.hp_progress(), cr, got, planet.done)
+	gs.save()
+	if bot:
+		print("[bot] offline %.1fh cells=%d prog %.1f%%->%.1f%% cr=%s" % [secs / 3600.0, int(r["cells"]), 100.0 * before, 100.0 * planet.hp_progress(), gs.fmt(cr)])
+	if planet.done:
+		await get_tree().create_timer(0.6).timeout
+		_on_cleared()
 
 
 ## スマホでは画面の短い辺を 450 として扱い、文字とボタンを大きく表示する。
@@ -130,7 +160,9 @@ func build_planet(saved: PackedFloat32Array = PackedFloat32Array()) -> void:
 	var tr := gs.trait_def()
 	if gs.pending_clear:
 		return
-	hud.banner("惑星 %d：%s" % [gs.planet, tr["name"]], String(tr["desc"]) if saved.is_empty() else "")
+	hud.banner("%s：%s" % [gs.place_name(), tr["name"]], String(tr["desc"]) if saved.is_empty() else "")
+	if bot and saved.is_empty():
+		print("[bot] start %s pm=%s est=%.1f raw=%.1f bias=%.2f min" % [gs.place_name(), gs.fmt(gs.pm), gs.est_start * gs.est_bias / 60.0, gs.est_start / 60.0, gs.est_bias])
 
 
 func _process(delta: float) -> void:
@@ -414,12 +446,13 @@ func _on_cleared() -> void:
 	var gs := GameState
 	var bonus := planet.remaining_value() * 0.5
 	gs.earn(bonus)
+	var galaxy_done := gs.local_planet() == gs.GALAXY_SIZE
 	var extra := gs.finish_planet()
 	Fx.burst(fx_layer, focus, Neon.LINE, 90, 520.0)
 	Fx.explosion(fx_layer, focus, Planet.CELL * 14.0)
 	Fx.ring(fx_layer, focus, Neon.YELLOW, Planet.CELL * 30.0, 0.9)
 	Fx.ring(fx_layer, focus, Neon.CYAN, Planet.CELL * 20.0, 0.7)
-	Fx.popup(fx_layer, focus, "惑星を破壊！", Neon.YELLOW)
+	Fx.popup(fx_layer, focus, "星系 %d を制覇！" % gs.galaxy() if galaxy_done else "惑星を破壊！", Neon.YELLOW)
 	Audio.play("clear")
 	shake(12.0)
 	# 全体まで引いて、残った塊が外へ飛び散る
@@ -434,8 +467,15 @@ func _on_cleared() -> void:
 	hud.show_clear(extra, gs.roll_next_traits())
 	gs.save()
 	if bot:
-		print("[bot] CLEAR planet %d in %.1f min" % [gs.planet, gs.planet_time / 60.0])
+		print("[bot] CLEAR %s (planet %d) in %.1f min cores=%s" % [gs.place_name(), gs.planet, gs.planet_time / 60.0, gs.fmt(gs.cores)])
 		gs.buy_all_skills()
+		for k in 50:
+			var any := false
+			for c in gs.CORE_UPS:
+				if gs.buy_core(String(c["id"])):
+					any = true
+			if not any:
+				break
 		go_next(String(gs.next_traits[0]))
 
 
@@ -461,6 +501,18 @@ func _shatter() -> void:
 func go_next(trait_id: String) -> void:
 	var gs := GameState
 	gs.start_planet(gs.planet + 1, trait_id)
+	hud.hide_panels()
+	get_tree().paused = false
+	build_planet()
+	gs.save()
+
+
+## 開いている星系の惑星1へ移る（周回）。今の惑星の進み具合・ツール・遺物は手放す。
+func warp(g: int) -> void:
+	var gs := GameState
+	if not gs.can_warp(g):
+		return
+	gs.start_planet((g - 1) * gs.GALAXY_SIZE + 1, "plain")
 	hud.hide_panels()
 	get_tree().paused = false
 	build_planet()

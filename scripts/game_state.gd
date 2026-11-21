@@ -7,8 +7,27 @@ signal changed
 
 const SAVE_PATH := "user://drift_miner_v3.cfg"
 const CLEAR_RATIO := 0.95
-const OFFLINE_RATE := 0.5
-const OFFLINE_CAP_H := 2.0
+const OFFLINE_CAP_H := 10.0
+const OFFLINE_RATE := 0.6
+## 星系：10惑星で1つ。惑星10を割ると次の星系が開き、星核（恒久通貨）が手に入る。
+const GALAXY_SIZE := 10
+## 惑星の硬さは「基本の曲線」を、今の力で割ったときの見込み時間が MIN_T〜MAX_T 秒に収まるよう寄せる。
+const MIN_T := 14.0 * 60.0
+const MAX_T := 30.0 * 60.0
+const PLANET_G := 25.0  # 基本の曲線で、星系の中の惑星が1つ進むごとの硬さ
+const GALAXY_HP := 2.0  # 星系が1つ進むごとの硬さ
+const GALAXY_CR := 0.25  # 星系が1つ進むごとの獲得クレジット（+25%）
+const EST_EFF := 0.3  # 見込みの計算で、表示の威力のうち実際に岩に入る割合
+const EST_CAP := 6.0 * 3600.0
+## 見込みと実際の時間のずれ（実際 ÷ 見込み）。割るたびに実際の時間で直していく。
+## 遊び方（スキルの買い方・遺物・タップ）で速さが変わるので、その人に合わせる。
+const EST_BIAS0 := 0.15
+## 星核で買う、上限のない強化
+const CORE_UPS := [
+	{"id": "pow", "name": "核の出力", "desc": "全ツールの威力 +20%", "cost": 1.0, "growth": 1.35},
+	{"id": "mat", "name": "核の選鉱", "desc": "素材の入手量 +15%", "cost": 1.0, "growth": 1.35},
+	{"id": "cr", "name": "核の相場", "desc": "獲得クレジット +25%", "cost": 1.0, "growth": 1.35},
+]
 
 ## 採掘ツール。dps は Lv1 の毎秒ダメージ。Lv25 ごとに威力が上がる（基本 ×2）。
 ## ドローン以外はスキルツリーで解放する。
@@ -104,7 +123,7 @@ const SKILLS := [
 	{"id": "c1", "name": "相場観", "desc": "獲得クレジット +10%", "max": 3, "cost": {"iron": 60}, "growth": 1.6, "links": ["cr_gain"], "pos": Vector2(107, 210), "branch": "C", "stat": "cr", "amt": 0.1},
 	{"id": "start_cr", "name": "初期資金", "desc": "惑星に着いたときのクレジット ×4", "max": 6, "cost": {"gold": 72}, "growth": 2.0, "links": ["discount"], "pos": Vector2(250, 250), "branch": "C", "stat": "", "amt": 0.0},
 	{"id": "c2", "name": "相場観", "desc": "獲得クレジット +10%", "max": 3, "cost": {"copper": 60}, "growth": 1.6, "links": ["c1"], "pos": Vector2(161, 315), "branch": "C", "stat": "cr", "amt": 0.1},
-	{"id": "offline", "name": "放置報酬", "desc": "閉じている間の報酬 +30%・上限 +1時間", "max": 6, "cost": {"gold": 96}, "growth": 1.8, "links": ["start_cr", "c2"], "pos": Vector2(277, 382), "branch": "C", "stat": "", "amt": 0.0},
+	{"id": "offline", "name": "放置報酬", "desc": "閉じている間に掘る速さ +30%・上限 +1時間", "max": 6, "cost": {"gold": 96}, "growth": 1.8, "links": ["start_cr", "c2"], "pos": Vector2(277, 382), "branch": "C", "stat": "", "amt": 0.0},
 	{"id": "c3", "name": "部品の規格化", "desc": "ツールの強化費用 -4%", "max": 3, "cost": {"crystal": 30}, "growth": 1.6, "links": ["offline"], "pos": Vector2(410, 424), "branch": "C", "stat": "cost", "amt": 0.04},
 	{"id": "interest", "name": "複利運用", "desc": "10秒ごとに所持クレジットの1%を得る", "max": 3, "cost": {"crystal": 120}, "growth": 2.5, "links": ["offline"], "pos": Vector2(277, 521), "branch": "C", "stat": "", "amt": 0.0},
 	{"id": "mat_find", "name": "鉱脈探知", "desc": "素材の入手量 +10%", "max": 15, "cost": {"iron": 72, "copper": 24}, "growth": 1.45, "links": ["base"], "pos": Vector2(-69, 95), "branch": "D", "stat": "", "amt": 0.0},
@@ -160,13 +179,18 @@ var planet_time: float = 0.0
 var saved_hp := PackedFloat32Array()
 var income_rate: float = 0.0
 var next_traits: Array = []
+var pm: float = 1.0
+var est_bias: float = EST_BIAS0
+var est_start: float = 0.0  # この惑星に着いたときの見込み（秒、ずれの補正前）
+var offline_used: bool = false  # この惑星で閉じていた間の採掘があった（ずれの補正に使わない）  # この惑星の硬さの倍率（惑星に着いたときに決めて保存する）
 var compare_time: float = 0.0  # 惑星クリアの画面で比べる、前の惑星の所要時間
 
 # --- 永続 ---
 var mats := {}
 var skills := {}
 var best_planet: int = 1
-var offline_gain: float = 0.0
+var cores: float = 0.0  # 星核（星系を割ると手に入る）
+var core_lv := {}  # 星核の強化のレベル
 var offline_secs: float = 0.0
 var prev_time: float = 0.0  # 前に割った惑星の所要時間（秒）
 var respec_ready: bool = false  # 惑星を割るたびに1回、スキルを全額返却で振り直せる
@@ -177,6 +201,8 @@ var tips := {}  # 最初の案内で済んだもの（buy・skill・tap）
 
 ## main.gd が保存の直前に掘った跡を渡すための関数
 var hp_provider: Callable
+var rate_provider: Callable  # main.gd が保存の直前に、実際に岩に入っている毎秒のダメージを渡す
+var damage_rate_saved: float = 0.0
 
 var _save_t: float = 0.0
 var _interest_t: float = 0.0
@@ -228,6 +254,8 @@ static func fmt(x: float) -> String:
 	while x >= 1000.0 and e < SUFFIX.size() - 1:
 		x /= 1000.0
 		e += 1
+	if x >= 1000.0:
+		return "%.2e" % x  # 単位の表より大きい（ふつうは来ない）
 	if x >= 100.0:
 		return "%d%s" % [int(x), SUFFIX[e]]
 	return "%.2f%s" % [x, SUFFIX[e]]
@@ -237,15 +265,24 @@ static func fmt(x: float) -> String:
 
 
 func start_planet(p: int, t: String) -> void:
+	var prev_pm := pm
+	var advancing := p == planet + 1
 	planet = p
 	trait_id = t
 	run_seed = randi()
-	credits = 20.0 * pow(4.0, skill_level("start_cr")) * pow(planet_mult(), 0.5) * (50.0 if has_key("k_loan") else 1.0)
 	tool_levels = {}
 	for td in TOOLS:
 		tool_levels[td["id"]] = 0
 	tool_levels["drone"] = 1
 	relics = []
+	pm = 1.0
+	pm = choose_pm()
+	if advancing and p > 1:
+		# 見込みは硬さにあまり左右されないことがあるので、前の惑星からの伸びも抑える（1〜1万倍）
+		pm = clampf(pm, prev_pm, prev_pm * 1.0e4)
+	est_start = estimate_time(pm)
+	offline_used = false
+	credits = 20.0 * pow(4.0, skill_level("start_cr")) * pow(planet_mult(), 0.5) * (50.0 if has_key("k_loan") else 1.0)
 	mats_this_planet = {}
 	for m in MATS:
 		mats_this_planet[m] = 0.0
@@ -265,9 +302,178 @@ func trait_def(id: String = "") -> Dictionary:
 	return TRAITS[0]
 
 
-## 惑星ごとの硬さ。1つ進むごとに 60 倍。
+## 惑星ごとの硬さ（着いたときに choose_pm で決めた値）
 func planet_mult() -> float:
-	return pow(60.0, planet - 1)
+	return pm
+
+
+func galaxy() -> int:
+	return (planet - 1) / GALAXY_SIZE + 1
+
+
+## 星系の中で何番目の惑星か（1〜10）
+func local_planet() -> int:
+	return (planet - 1) % GALAXY_SIZE + 1
+
+
+func galaxy_cr_mult(g: int = 0) -> float:
+	return 1.0 + GALAXY_CR * ((galaxy() if g <= 0 else g) - 1)
+
+
+func galaxy_hp_mult(g: int = 0) -> float:
+	return pow(GALAXY_HP, (galaxy() if g <= 0 else g) - 1)
+
+
+## 開いている一番先の星系
+func galaxy_best() -> int:
+	return (best_planet - 1) / GALAXY_SIZE + 1
+
+
+func place_name(p: int = 0) -> String:
+	var n := planet if p <= 0 else p
+	return "星系 %d・惑星 %d" % [(n - 1) / GALAXY_SIZE + 1, (n - 1) % GALAXY_SIZE + 1]
+
+
+## 基本の曲線：星系の中で1つ進むごとに PLANET_G 倍、星系が1つ進むごとに GALAXY_HP 倍。
+## そのうえで、今の力で割ったときの見込み時間が MIN_T〜MAX_T に収まるよう寄せる。
+## （スキルや星核で強くなると速く割れるが、一瞬で終わったり、何時間も詰まったりはしない）
+func choose_pm() -> float:
+	if planet == 1 and best_planet <= 1:
+		return 1.0
+	var base := pow(PLANET_G, local_planet() - 1) * galaxy_hp_mult()
+	var lo := _pm_for_time(MIN_T)
+	var hi := _pm_for_time(MAX_T)
+	return clampf(base, lo, maxf(lo, hi))
+
+
+## 見込み時間が t 秒になる硬さ（二分探索、対数で）
+func _pm_for_time(t: float) -> float:
+	var a := 0.0
+	var b := 60.0
+	for k in 22:
+		var m := (a + b) * 0.5
+		if estimate_time(pow(10.0, m)) * est_bias > t:
+			b = m
+		else:
+			a = m
+	return pow(10.0, a)
+
+
+## 硬さ p の惑星を、今のスキル（遺物なし）で割るのにかかる時間の見込み（秒、最大2時間）。
+## 浅い順に掘り、一番安いツールから強化していく、ゆるい計算。
+func estimate_time(p: float) -> float:
+	var r := 38.0 if planet == 1 else 56.0
+	var n_total := PI * r * r
+	var dmax := 1.0 - sqrt(1.0 - CLEAR_RATIO)
+	const NB := 40
+	var cnt := PackedFloat32Array()
+	var hpc := PackedFloat32Array()
+	var val := PackedFloat32Array()
+	var csum := 0.0
+	for k in NB:
+		var d := dmax * (k + 0.5) / NB
+		cnt.append(1.0 - d)
+		csum += 1.0 - d
+	var cm := pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * (0.6 if has_key("k_loan") else 1.0) * galaxy_cr_mult() * core_mult("cr")
+	for k in NB:
+		var d := dmax * (k + 0.5) / NB
+		cnt[k] = cnt[k] / csum * n_total * CLEAR_RATIO
+		hpc.append(2.0 * p * pow(10.0, d * 5.2) * 1.2)
+		val.append(2.0 * p * pow(10.0, d * 5.2) * 0.55 * cm / pow(p, 0.45) * 1.4)
+	var ids: Array = []
+	for td in TOOLS:
+		if tool_unlocked(String(td["id"])):
+			ids.append(String(td["id"]))
+	var lv := {}
+	for id in ids:
+		lv[id] = 1 if id == "drone" else 0
+	var cr := 20.0 * pow(4.0, skill_level("start_cr")) * pow(p, 0.5) * (50.0 if has_key("k_loan") else 1.0)
+	var cmul := cost_mult()
+	var t := 0.0
+	var dt := 10.0
+	var b := 0
+	var part := 0.0  # いまのバケツの、削りかけのマスに入ったダメージ
+	while b < NB and t < EST_CAP:
+		# 強化：一番安いツールを、2番目に安いツールの値段に届くまで（または資金が尽きるまで）まとめて買う
+		for guard in 200:
+			var best := ""
+			var bc := INF
+			var second := INF
+			for id in ids:
+				var td := tool_def(id)
+				var c := float(td["cost"]) * cmul * pow(float(td["growth"]), int(lv[id]))
+				if c < bc:
+					second = bc
+					bc = c
+					best = id
+				elif c < second:
+					second = c
+			if best == "" or bc > cr:
+				break
+			var g := float(tool_def(best)["growth"])
+			var n_aff := int(floor(log(1.0 + cr * (g - 1.0) / bc) / log(g)))
+			var n_cmp := int(ceil(log(maxf(second / bc, 1.0001)) / log(g))) if second < INF else n_aff
+			var nb := maxi(1, mini(n_aff, n_cmp))
+			cr -= bc * (pow(g, nb) - 1.0) / (g - 1.0)
+			lv[best] = int(lv[best]) + nb
+		var dps := 0.0
+		for id in ids:
+			dps += tool_dps_at(id, int(lv[id]))
+		var dmg := dps * EST_EFF * dt + part
+		part = 0.0
+		while b < NB and dmg > 0.0:
+			var need := hpc[b] * cnt[b]
+			if dmg >= need:
+				dmg -= need
+				cr += val[b] * cnt[b]
+				b += 1
+			else:
+				var k := floorf(dmg / hpc[b])
+				cnt[b] -= k
+				cr += val[b] * k
+				part = dmg - k * hpc[b]
+				dmg = 0.0
+		t += dt
+		dt = maxf(10.0, t * 0.02)
+	return t
+
+
+## 閉じていた間の掘る速さ（保存したときの実際のペースに対する割合）
+func offline_eff() -> float:
+	return OFFLINE_RATE * (1.0 + 0.3 * skill_level("offline"))
+
+
+func core_mult(id: String) -> float:
+	var amt := {"pow": 0.2, "mat": 0.15, "cr": 0.25}
+	return 1.0 + float(amt.get(id, 0.0)) * int(core_lv.get(id, 0))
+
+
+func core_cost(id: String) -> float:
+	for c in CORE_UPS:
+		if c["id"] == id:
+			return ceilf(float(c["cost"]) * pow(float(c["growth"]), int(core_lv.get(id, 0))))
+	return INF
+
+
+func buy_core(id: String) -> bool:
+	var c := core_cost(id)
+	if c > cores + 0.001:
+		return false
+	cores -= c
+	core_lv[id] = int(core_lv.get(id, 0)) + 1
+	save()
+	changed.emit()
+	return true
+
+
+## 星系の最後の惑星を割ったときに手に入る星核の数
+func cores_for_clear() -> float:
+	return 2.0 + float(galaxy())
+
+
+## 星系を選び直す（周回）。その星系の惑星1から始める。開いている星系だけ。
+func can_warp(g: int) -> bool:
+	return g >= 1 and g <= galaxy_best()
 
 
 ## 深さ（0=表面, 1=中心）ごとの1マスの耐久。深いほど指数的に硬い。
@@ -281,7 +487,7 @@ func cell_value(depth: float) -> float:
 
 
 func cr_mult() -> float:
-	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * (1.0 + 0.5 * relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0)
+	return pow(1.35, skill_level("cr_gain")) * (1.0 + stat("cr")) * (1.0 + 0.5 * relic_count("cr")) * (0.6 if has_key("k_loan") else 1.0) * galaxy_cr_mult() * core_mult("cr")
 
 
 func earn(amount: float, track: bool = true) -> void:
@@ -291,7 +497,7 @@ func earn(amount: float, track: bool = true) -> void:
 
 
 func mat_mult() -> float:
-	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * (1.0 + 0.3 * relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0)
+	return (1.0 + 0.1 * skill_level("mat_find") + stat("mat")) * (1.0 + 0.3 * relic_count("mat")) * (0.7 if has_key("k_relic") else 1.0) * core_mult("mat")
 
 
 func add_mat(m: String, amount: float) -> float:
@@ -343,6 +549,11 @@ func finish_planet() -> Dictionary:
 			mats[m] = float(mats[m]) + a
 			extra[m] = a
 	best_planet = maxi(best_planet, planet + 1)
+	if local_planet() == GALAXY_SIZE:
+		cores += cores_for_clear()
+	if not offline_used and est_start > 0.0 and planet_time > 60.0:
+		var ratio := clampf(planet_time / est_start, 0.02, 50.0)
+		est_bias = clampf(exp(lerpf(log(est_bias), log(ratio), 0.35)), 0.02, 50.0)
 	compare_time = prev_time
 	prev_time = planet_time
 	respec_ready = true
@@ -381,7 +592,7 @@ func tool_level(id: String) -> int:
 
 
 func dps_mult() -> float:
-	return pow(1.45, skill_level("resonance")) * (1.0 + stat("pow")) * pow(2.5, skill_level("overdrive")) * (1.0 + 0.5 * relic_count("power"))
+	return pow(1.45, skill_level("resonance")) * (1.0 + stat("pow")) * pow(2.5, skill_level("overdrive")) * (1.0 + 0.5 * relic_count("power")) * core_mult("pow")
 
 
 func milestone_mult() -> float:
@@ -683,6 +894,8 @@ func buy_all_skills() -> int:
 func save() -> void:
 	if hp_provider.is_valid():
 		saved_hp = hp_provider.call()
+	if rate_provider.is_valid():
+		damage_rate_saved = float(rate_provider.call())
 	var cfg := ConfigFile.new()
 	cfg.set_value("run", "seed", run_seed)
 	cfg.set_value("run", "planet", planet)
@@ -694,6 +907,13 @@ func save() -> void:
 	cfg.set_value("run", "time", planet_time)
 	cfg.set_value("run", "hp", saved_hp)
 	cfg.set_value("run", "income_rate", income_rate)
+	cfg.set_value("run", "pm", pm)
+	cfg.set_value("run", "rate", damage_rate_saved)
+	cfg.set_value("run", "est_start", est_start)
+	cfg.set_value("run", "offline_used", offline_used)
+	cfg.set_value("meta", "est_bias", est_bias)
+	cfg.set_value("meta", "cores", cores)
+	cfg.set_value("meta", "core_lv", core_lv)
 	cfg.set_value("run", "pending_clear", pending_clear)
 	cfg.set_value("run", "clear_extra", clear_extra)
 	cfg.set_value("run", "next_traits", next_traits)
@@ -726,6 +946,13 @@ func _load() -> void:
 	planet_time = float(cfg.get_value("run", "time", 0.0))
 	saved_hp = cfg.get_value("run", "hp", PackedFloat32Array())
 	income_rate = float(cfg.get_value("run", "income_rate", 0.0))
+	pm = float(cfg.get_value("run", "pm", pow(60.0, planet - 1)))
+	damage_rate_saved = float(cfg.get_value("run", "rate", 0.0))
+	est_start = float(cfg.get_value("run", "est_start", 0.0))
+	offline_used = bool(cfg.get_value("run", "offline_used", false))
+	est_bias = float(cfg.get_value("meta", "est_bias", EST_BIAS0))
+	cores = float(cfg.get_value("meta", "cores", 0.0))
+	core_lv = cfg.get_value("meta", "core_lv", {})
 	pending_clear = bool(cfg.get_value("run", "pending_clear", false))
 	clear_extra = cfg.get_value("run", "clear_extra", {})
 	next_traits = cfg.get_value("run", "next_traits", [])
@@ -744,9 +971,7 @@ func _load() -> void:
 	var t := float(cfg.get_value("meta", "saved_at", 0.0))
 	var away := Time.get_unix_time_from_system() - t
 	if t > 0.0 and away > 60.0:
+		# 閉じていた間の採掘は、惑星を作った後に main.gd が実際のマスを削って進める
 		offline_secs = minf(away, (OFFLINE_CAP_H + skill_level("offline")) * 3600.0)
-		offline_gain = income_rate * offline_secs * OFFLINE_RATE * pow(1.3, skill_level("offline"))
-		if offline_gain > 0.0 and not pending_clear:
-			earn(offline_gain, false)
-		else:
-			offline_gain = 0.0
+		if pending_clear:
+			offline_secs = 0.0

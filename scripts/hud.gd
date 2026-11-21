@@ -18,6 +18,8 @@ var _banner_time: float = 0.0
 var _side: VBoxContainer
 var _sound_btn: Button
 var _skill_btn: Button
+var _galaxy_btn: Button
+var _warp_arm := 0  # 周回の確認（もう一度押すと移る星系の番号）
 var _dot_t: float = 0.0
 var _tool_panel: PanelContainer
 var _tool_rows := {}
@@ -80,6 +82,8 @@ func _ready() -> void:
 	_skill_btn = skill_btn
 	var relic_btn := _icon_button("relic", "遺物", Neon.MAGENTA)
 	relic_btn.pressed.connect(_open_relics)
+	_galaxy_btn = _icon_button("galaxy", "星系", Neon.YELLOW)
+	_galaxy_btn.pressed.connect(_open_galaxy)
 	_sound_btn = _icon_button("sound", "音 ON", Neon.ORANGE)
 	_sound_btn.pressed.connect(func():
 		Audio.set_enabled(not Audio.enabled)
@@ -754,7 +758,7 @@ func _process(delta: float) -> void:
 		var t := int(gs.planet_time)
 		var pt := int(gs.prev_time)
 		var prev := ("／前回 %d:%02d" % [pt / 60, pt % 60]) if pt > 0 else ""
-		_planet_label.text = "[right]惑星 %d：%s\n[color=#%s]掘削 %.1f%%%s[/color]\n経過 %d:%02d%s[/right]" % [gs.planet, gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), _eta_text(p.eta()), t / 60, t % 60, prev]
+		_planet_label.text = "[right]%s：%s\n[color=#%s]掘削 %.1f%%%s[/color]\n経過 %d:%02d%s[/right]" % [gs.place_name(), gs.trait_def()["name"], Neon.ORANGE.to_html(false), 100.0 * minf(1.0, float(p.broken()) / maxf(1.0, p.needed())), _eta_text(p.eta()), t / 60, t % 60, prev]
 	_dot_t -= delta
 	if _dot_t <= 0.0:
 		_dot_t = 0.5
@@ -766,6 +770,13 @@ func _process(delta: float) -> void:
 		if can != bool(_skill_btn.get_meta("dot")):
 			_skill_btn.set_meta("dot", can)
 			_skill_btn.queue_redraw()
+		var core_can := false
+		for c in gs.CORE_UPS:
+			if gs.core_cost(String(c["id"])) <= gs.cores + 0.001:
+				core_can = true
+		if core_can != bool(_galaxy_btn.get_meta("dot")):
+			_galaxy_btn.set_meta("dot", core_can)
+			_galaxy_btn.queue_redraw()
 	_update_tools()
 	var real := delta / maxf(Engine.time_scale, 0.01)
 	if _toast_time > 0.0:
@@ -1006,7 +1017,7 @@ func _build_tree() -> void:
 	elif gs.skill_maxed(sid):
 		dc.text = "[color=#9BE86A]最大レベル[/color]"
 	elif not gs.tier_ok(sid):
-		dc.text = "[color=#E8504A]惑星 %d に着くと解放（これまでの最高：惑星 %d）[/color]" % [gs.tier_planet(sid), gs.best_planet]
+		dc.text = "[color=#E8504A]%s に着くと解放（これまでの最高：%s）[/color]" % [gs.place_name(gs.tier_planet(sid)), gs.place_name(gs.best_planet)]
 	elif gs.is_key(sid) and gs.active_key() != "":
 		dc.text = ("[color=#E8504A]要石「%s」を外すと付けられる[/color]" % gs.skill_def(gs.active_key())["name"]) + key_note
 	elif not gs.skill_open(sid):
@@ -1096,7 +1107,10 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	_clear(_msg_box)
 	var gs := GameState
 	var t := int(gs.planet_time)
-	_title(_msg_box, "惑星 %d を破壊した！" % gs.planet, 24, Neon.LIME)
+	var galaxy_done := gs.local_planet() == gs.GALAXY_SIZE
+	_title(_msg_box, ("星系 %d を制覇した！" % gs.galaxy()) if galaxy_done else ("%s を破壊した！" % gs.place_name()), 24, Neon.LIME)
+	if galaxy_done:
+		_title(_msg_box, "星核 +%s（いま %s）。左の「星系」で、ずっと残る強化に使える。\n次の星系は岩が硬いぶん、クレジットも多い" % [gs.fmt(gs.cores_for_clear()), gs.fmt(gs.cores)], 15, Neon.YELLOW)
 	var cmp := ""
 	if gs.compare_time > 0.0:
 		var dt := int(gs.planet_time - gs.compare_time)
@@ -1111,10 +1125,10 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	got.custom_minimum_size = Vector2(_panel_w() - 24.0, 0)
 	got.text = "[center]この惑星で集めた素材\n%s%s[/center]" % [_mat_bb(gs.mats_this_planet, false), ("\n核の回収ボーナス " + _mat_bb(extra, false)) if not extra.is_empty() else ""]
 	_msg_box.add_child(got)
-	_title(_msg_box, "次の惑星（ずっと硬くなる）" if next.size() == 1 else "次の惑星を選ぶ", 17)
+	_title(_msg_box, ("次の星系へ" if galaxy_done else "次の惑星") if next.size() == 1 else "次の惑星を選ぶ", 17)
 	for tid in next:
 		var tr := gs.trait_def(String(tid))
-		var b := _wide(_msg_box, "惑星 %d：%s\n%s" % [gs.planet + 1, tr["name"], tr["desc"]], 64, 16)
+		var b := _wide(_msg_box, "%s：%s\n%s" % [gs.place_name(gs.planet + 1), tr["name"], tr["desc"]], 64, 16)
 		b.pressed.connect(func(): main.go_next(String(tid)))
 	var tree := _wide(_msg_box, "先にスキルマップを見る", 44, 15)
 	tree.pressed.connect(func():
@@ -1126,14 +1140,78 @@ func show_clear(extra: Dictionary, next: Array) -> void:
 	_msg_panel.visible = true
 
 
-func show_offline(gain: float, secs: float) -> void:
+func show_offline(secs: float, before: float, after: float, cr: float, got: Dictionary, cleared: bool) -> void:
 	get_tree().paused = true
 	_clear(_msg_box)
 	_title(_msg_box, "おかえりなさい", 24)
 	var h := int(secs) / 3600
 	var m := (int(secs) % 3600) / 60
 	var t := ("%d時間%d分" % [h, m]) if h > 0 else ("%d分" % m)
-	_title(_msg_box, "離れていた %s の間も採掘を続けていた\n+%s CR" % [t, GameState.fmt(gain)], 17, Neon.ORANGE)
+	var gs := GameState
+	_title(_msg_box, "離れていた %s の間も、艦隊は掘り続けていた\n掘削 %.1f%% → %.1f%%" % [t, 100.0 * before, 100.0 * after], 17, Neon.ORANGE)
+	var lbl := RichTextLabel.new()
+	lbl.bbcode_enabled = true
+	lbl.fit_content = true
+	lbl.scroll_active = false
+	lbl.add_theme_font_size_override("normal_font_size", 15)
+	lbl.custom_minimum_size = Vector2(_panel_w() - 24.0, 0)
+	lbl.text = "[center]+%s CR%s[/center]" % [gs.fmt(cr), ("\n" + _mat_bb(got, false)) if not got.is_empty() else ""]
+	_msg_box.add_child(lbl)
+	if cleared:
+		_title(_msg_box, "惑星を割るところまで掘れた！", 16, Neon.LIME)
+	var cap := gs.OFFLINE_CAP_H + gs.skill_level("offline")
+	_title(_msg_box, "閉じている間は、最後のペースの %d%% で、最大 %d時間 掘る（スキル「放置報酬」で伸びる）" % [int(round(100.0 * gs.offline_eff())), int(cap)], 13, Color(1, 1, 1, 0.6))
 	var ok := _wide(_msg_box, "受け取る", 52, 18)
-	ok.pressed.connect(_close)
+	ok.pressed.connect(func():
+		_close()
+		if cleared:
+			main.call("_on_cleared"))
+	_msg_panel.visible = true
+
+
+# ---------------------------------------------------------------- 星系と星核
+
+
+func _open_galaxy() -> void:
+	Audio.play("open")
+	get_tree().paused = true
+	_warp_arm = 0
+	_build_galaxy()
+
+
+func _build_galaxy() -> void:
+	_clear(_msg_box)
+	var gs := GameState
+	_title(_msg_box, "星系", 22)
+	_title(_msg_box, "惑星10個で1つの星系。10個目を割ると星系を制覇して星核が手に入り、次の星系が開く。\n先の星系ほど岩は硬いが、クレジットも多い", 14, Color(1, 1, 1, 0.75))
+	_title(_msg_box, "星核 %s" % gs.fmt(gs.cores), 20, Neon.YELLOW)
+	for c in gs.CORE_UPS:
+		var id := String(c["id"])
+		var lv := int(gs.core_lv.get(id, 0))
+		var cost := gs.core_cost(id)
+		var b := _wide(_msg_box, "%s Lv%d　%s\n強化：星核 %s" % [c["name"], lv, c["desc"], gs.fmt(cost)], 56, 15)
+		b.disabled = cost > gs.cores + 0.001
+		b.pressed.connect(func():
+			if gs.buy_core(id):
+				Audio.play("buy")
+				_build_galaxy())
+	_title(_msg_box, "いまは %s（最高 %s）" % [gs.place_name(), gs.place_name(gs.best_planet)], 15, Neon.CYAN)
+	var best := gs.galaxy_best()
+	if best >= 2:
+		_title(_msg_box, "周回：開いた星系の惑星1からやり直せる。今の惑星のクレジット・ツール・遺物は消える", 13, Color(1, 1, 1, 0.6))
+		for g in range(1, best + 1):
+			if g == gs.galaxy():
+				continue
+			var label := "星系 %d へ移る（CR ×%.2f・制覇で星核 +%d）" % [g, gs.galaxy_cr_mult(g), 2 + g]
+			if _warp_arm == g:
+				label = "もう一度押すと 星系 %d の惑星1へ移る" % g
+			var w := _wide(_msg_box, label, 44, 15)
+			w.pressed.connect(func():
+				if _warp_arm == g:
+					main.warp(g)
+				else:
+					_warp_arm = g
+					_build_galaxy())
+	var back := _wide(_msg_box, "閉じる", 48, 17)
+	back.pressed.connect(_close)
 	_msg_panel.visible = true

@@ -244,7 +244,8 @@ func restore(saved: PackedFloat32Array) -> void:
 			still.append(i)
 	buried = still
 	done = broken() >= needed()
-	_rem_t = 0.0
+	_update_remaining()
+	_rem_t = 2.0
 	_redraw_all()
 	_rebuild_air()
 	_update_outer()
@@ -729,9 +730,10 @@ func _update_remaining() -> void:
 	var left := needed() - broken()
 	if left <= 0:
 		remaining_hp = 0.0
+		_ensure_need_total()
+		cleared_hp = _need_total
 		return
 	var arr := PackedFloat32Array()
-	var full := 0.0
 	for i in hp.size():
 		if max_hp[i] > 0.0:
 			if hp[i] > 0.0:
@@ -741,16 +743,65 @@ func _update_remaining() -> void:
 	for k in mini(left, arr.size()):
 		s += arr[k]
 	remaining_hp = s
-	if _need_total <= 0.0:
-		var all := PackedFloat32Array()
-		for i in max_hp.size():
-			if max_hp[i] > 0.0:
-				all.append(max_hp[i])
-		all.sort()
-		for k in mini(needed(), all.size()):
-			full += all[k]
-		_need_total = full
+	_ensure_need_total()
 	cleared_hp = maxf(0.0, _need_total - remaining_hp)
+
+
+## 閉じていた間の採掘。ダメージ budget を、柔らかいマス（削りかけ・浅い所）から順に使って砕く。
+## 遺物と宝箱は残す（戻ってから自分で掘り当てる）。爆薬岩は爆発せずに砕ける。
+## クリアに必要な数に届いたらそこで止める。報酬は返り値で渡し、main.gd が入れる。
+func offline_dig(budget: float) -> Dictionary:
+	var gs := GameState
+	var order: Array = []
+	for i in hp.size():
+		if hp[i] > 0.0:
+			var b := int(block[i])
+			if b != gs.B.RELIC and b != gs.B.CACHE:
+				order.append(i)
+	order.sort_custom(func(a: int, c: int) -> bool: return hp[a] < hp[c])
+	var cr := 0.0
+	var ores := {}
+	var n := 0
+	var left := needed() - broken()
+	for i in order:
+		if left <= 0 or budget <= 0.0:
+			break
+		var h := hp[i]
+		if depth[i] > 0.5 and gs.relic_count("deep") > 0:
+			h /= 1.0 + gs.relic_count("deep")
+		if h > budget:
+			hp[i] -= budget * (hp[i] / h)
+			budget = 0.0
+			break
+		budget -= h
+		hp[i] = 0.0
+		alive_count -= 1
+		left -= 1
+		n += 1
+		var b := int(block[i])
+		cr += gs.cell_value(depth[i]) * float(gs.BLOCKS[b]["value"])
+		if String(gs.BLOCKS[b]["mat"]) != "":
+			ores[b] = int(ores.get(b, 0)) + 1
+	done = broken() >= needed()
+	_redraw_all()
+	_rebuild_air()
+	_update_outer()
+	_update_remaining()
+	return {"cr": cr, "ores": ores, "cells": n}
+
+
+func _ensure_need_total() -> void:
+	if _need_total > 0.0:
+		return
+	var all := PackedFloat32Array()
+	for i in max_hp.size():
+		if max_hp[i] > 0.0:
+			all.append(max_hp[i])
+	all.sort()
+	var full := 0.0
+	for k in mini(needed(), all.size()):
+		full += all[k]
+	_need_total = full
 
 
 ## 耐久で見た進み具合（0〜1）
