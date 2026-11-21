@@ -35,7 +35,10 @@ var _zoom: float = 0.0
 var focus := Vector2.ZERO  # ツールが狙う中心（ワールド座標）
 var _focus_goal := Vector2.ZERO
 var _focus_t: float = 0.0
-var _shake: float = 0.0
+var _shake: float = 0.0  # 揺れの強さ（トラウマ、0〜1）。揺れの量はこれの2乗で、時間とともに減る
+var _shake_t: float = 0.0
+var _shake_noise: FastNoiseLite
+var _punch: float = 0.0  # 一瞬だけ寄る量（大きな出来事で、カメラが「押される」）
 var _fx_budget: float = 20.0  # 1秒に出せる破片演出の数（多すぎると重くなる）
 var _manual := false  # プレイヤーが指定した移動先へ向かっている／そこを掘っている
 var _dwell: float = 0.0  # 今の場所に着いてからの時間
@@ -320,19 +323,47 @@ func _fit_camera(delta: float) -> void:
 		direct = true
 	var target := short / (cells * Planet.CELL)
 	_zoom = target if _zoom <= 0.0 or direct else lerpf(_zoom, target, clampf(delta * 3.0, 0.0, 1.0))
-	camera.zoom = Vector2(_zoom, _zoom)
+	_punch = lerpf(_punch, 0.0, clampf(delta * 9.0, 0.0, 1.0))
+	camera.zoom = Vector2(_zoom, _zoom) * (1.0 + _punch)
 	Fx.view_scale = 1.0 / _zoom
 	var vp := get_viewport().get_visible_rect().size
 	var goal := center - (area.get_center() - vp * 0.5) / _zoom
 	camera.position = goal if camera.position == Vector2.ZERO or direct else camera.position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0))
-	# 画面の揺れ
-	_shake = maxf(0.0, _shake - delta * 18.0)
-	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake / _zoom * 2.0
+	# 画面の揺れ：なめらかなノイズで、強さの2乗だけ動かす（小さな揺れは控えめ、大きな揺れははっきり）。
+	# ほんの少しだけ傾けもする。毎フレームの乱数より、目が疲れにくく今風の揺れになる。
+	_ensure_shake()
+	_shake = maxf(0.0, _shake - delta * 1.6)
+	_shake_t += delta
+	var amt := _shake * _shake
+	if amt > 0.0001:
+		var nx := _shake_noise.get_noise_2d(_shake_t * 90.0, 0.0)
+		var ny := _shake_noise.get_noise_2d(0.0, _shake_t * 90.0 + 50.0)
+		var nr := _shake_noise.get_noise_2d(_shake_t * 90.0 + 100.0, 100.0)
+		camera.offset = Vector2(nx, ny) * amt * 26.0 / _zoom
+		camera.rotation = nr * amt * 0.02
+	else:
+		camera.offset = Vector2.ZERO
+		camera.rotation = 0.0
 
 
-## 画面を揺らす（爆発など）
+## 画面を揺らす（爆発など）。amount は 0〜12 くらい（12 で最大）
 func shake(amount: float) -> void:
-	_shake = clampf(maxf(_shake, amount), 0.0, 12.0)
+	_shake = clampf(maxf(_shake, amount / 12.0) + amount / 60.0, 0.0, 1.0)
+
+
+## カメラを一瞬だけ寄せて戻す（衝撃で押されたように）。amount は倍率の増え（0.02〜0.08）
+func punch(amount: float) -> void:
+	_punch = maxf(_punch, amount)
+
+
+## 揺れに使うなめらかなノイズ（Godot 標準の FastNoiseLite）を用意する
+func _ensure_shake() -> void:
+	if _shake_noise != null:
+		return
+	camera.ignore_rotation = false
+	_shake_noise = FastNoiseLite.new()
+	_shake_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	_shake_noise.frequency = 0.05
 
 
 func _auto_buy() -> bool:
@@ -369,6 +400,7 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 	if show:
 		_fx_budget -= 1.0
 		Fx.burst(fx_layer, pos, col, 5, 70.0)
+		Fx.pop(fx_layer, pos, col.lightened(0.3), Planet.CELL)
 	if m != "":
 		var got := gs.add_mat(m, _mat_amount())
 		var e: Array = _mat_pop.get(m, [0.0, pos])
@@ -396,6 +428,7 @@ func _on_cell_broken(pos: Vector2, value: float, b: int) -> void:
 		Fx.ring(fx_layer, pos, Neon.ORANGE, Planet.CELL * 6.0)
 		_absorb(pos, Neon.YELLOW, 8)
 		Audio.play("cache")
+		_big_hit(pos, Neon.YELLOW, 0.06)
 		Fx.popup(fx_layer, pos, "宝箱！ +%s CR・%s +%s" % [gs.fmt(cr), gs.MAT_NAMES[mm], gs.fmt(got)], Neon.YELLOW)
 		if randf() < 0.3 * gs.relic_count("hoard"):
 			_relic_fx(pos)
@@ -417,6 +450,16 @@ func _relic_fx(pos: Vector2) -> void:
 	Fx.flash(fx_layer, pos, c, Planet.CELL * 3.0, 0.6)
 	_absorb(pos, c, 8)
 	Audio.play("relic")
+	_big_hit(pos, c, 0.08)
+
+
+## まれな大きな出来事（遺物・宝箱）の手応え：一瞬止めて、芯が光り、画面が波打ち、カメラが少し寄る
+func _big_hit(pos: Vector2, col: Color, stop: float) -> void:
+	ScreenFx.hitstop(stop)
+	Fx.core(fx_layer, pos, col, Planet.CELL * 1.6, 0.2)
+	Fx.shockwave(fx_layer, pos, Planet.CELL * 10.0, 0.8, 0.55)
+	punch(0.035)
+	shake(3.0)
 
 
 ## 埋まったままの遺物・宝箱が爆発に巻き込まれて壊れた
@@ -440,6 +483,7 @@ func on_explosion(c: Vector2, r: float) -> void:
 	Fx.burst(fx_layer, c, Neon.ORANGE, 14, r * 4.0)
 	Audio.play("blast")
 	shake(4.0)
+	punch(0.015)
 
 
 func _on_cleared() -> void:
@@ -452,9 +496,15 @@ func _on_cleared() -> void:
 	Fx.explosion(fx_layer, focus, Planet.CELL * 14.0)
 	Fx.ring(fx_layer, focus, Neon.YELLOW, Planet.CELL * 30.0, 0.9)
 	Fx.ring(fx_layer, focus, Neon.CYAN, Planet.CELL * 20.0, 0.7)
-	Fx.popup(fx_layer, focus, "星系 %d を制覇！" % gs.galaxy() if galaxy_done else "惑星を破壊！", Neon.YELLOW)
+	Fx.popup(fx_layer, focus, "星系 %d を制覇！" % gs.galaxy() if galaxy_done else "惑星を破壊！", Neon.YELLOW, 18)
 	Audio.play("clear")
 	shake(12.0)
+	# とどめの一撃：一瞬止めて、白く光り、大きな衝撃波が画面を走る
+	ScreenFx.hitstop(0.14)
+	Fx.core(fx_layer, focus, Neon.YELLOW, Planet.CELL * 5.0, 0.3)
+	Fx.shockwave(fx_layer, focus, Planet.CELL * 30.0, 1.0, 0.9)
+	Fx.big_flash(fx_layer, focus, Color(1.0, 0.95, 0.8), Planet.CELL * 9.0, 0.45)
+	punch(0.08)
 	# 全体まで引いて、残った塊が外へ飛び散る
 	_outro = 0.0
 	planet.hunt_cell = -1
@@ -494,6 +544,7 @@ func _shatter() -> void:
 		Fx.burst(fx_layer, planet.cell_center(i), col, 3, 260.0 + 200.0 * planet.depth[i])
 	Fx.ring(fx_layer, planet.position, Neon.LINE, planet.world_radius() * 1.6, 1.0)
 	Fx.flash(fx_layer, planet.position, Neon.YELLOW, planet.world_radius() * 0.6, 0.8)
+	Fx.shockwave(fx_layer, planet.position, planet.world_radius() * 1.4, 1.0, 1.1)
 	Audio.play("blast")
 	shake(10.0)
 

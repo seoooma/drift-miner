@@ -59,6 +59,8 @@ Web 版：https://seoooma.github.io/drift-miner/ （`main` にマージされる
 - 探査：素材の入手量、透視スキャン（遺物が見える）、遺物の勘、精錬、核の回収
 - 自動化：自動探索（遠くの鉱脈へ移動）、自動強化、誘爆制御、航路選択（次の惑星を候補から選ぶ）
 
+光の演出の画像は Kenney の Particle Pack（CC0）、画面の衝撃波のシェーダーは GDQuest の Godot Shaders（MIT）を元にしています。
+
 文字は等幅の Share Tech Mono（英数字）と M PLUS 1 Code（日本語、サブセット）を同梱しています（どちらも SIL OFL）。
 
 ## 構成
@@ -74,9 +76,11 @@ scripts/hud.gd          画面表示、ツール一覧、スキルマップ・�
 scripts/skill_map.gd    スキルマップの描画と操作（ドラッグ・拡大縮小・選択）
 scripts/audio.gd        Autoload。BGM のループと効果音（間引き・音程のゆらぎ・オンオフ）
 scripts/backdrop.gd     背景（地模様・星雲・視差のある星）
-scripts/fx.gd           演出（破片・火花・発光・衝撃波・爆発アニメ・数値ポップ）
+scripts/fx.gd           演出（回る破片・光の筋の火花・砕けた瞬間の閃き・爆発の芯・衝撃波・弾む数値ポップ・尾を引く回収の粒）
+scripts/screen_fx.gd    Autoload。走査線と周辺減光、ヒットストップ（遺物・宝箱・惑星の破壊で一瞬だけ時間を止める）
 scripts/neon.gd         見た目の決まりごと（色・線・にじみ・線のアイコン）を一か所に
 scripts/bracket_box.gd  角かっこ付きのボタンの枠
 shaders/cells.gdshader  惑星を平らな塗りと白い階段状の輪郭線で描くシェーダー
+shaders/shockwave.gdshader 画面の衝撃波の歪み（GDQuest のシェーダーを元にしたもの、MIT）
 assets/                 音（素材の出どころは CREDITS.md）
 ```
