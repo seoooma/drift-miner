@@ -1,16 +1,16 @@
 class_name Fx
 extends RefCounted
 ## 演出。小さな四角い粒、光の筋の火花、砕けた瞬間の閃き、揺らぐ輪（範囲攻撃・爆発）、数値ポップ、画面の衝撃波。
+## 光の画像は Kenney「Particle Pack」（CC0）、画面の衝撃波のシェーダーは GDQuest「Godot Shaders」（MIT）を元にしている（CREDITS.md）。
 ## 光は線と演出にだけ。太く薄い線を加算合成で下に敷いて、にじみを作る（毎フレームのぼかしは使わない）。
 ## view_scale はカメラの倍率の逆数（画面 1px がワールドで何単位か）。太さや文字の大きさを画面のピクセルで決めるのに使う。
 
 static var view_scale: float = 1.0
-static var impact: ImpactFx  # 画面の衝撃波・色ずれ・閃光（main が作る。なければ何もしない）
 static var _cache := {}
 static var _add_mat: CanvasItemMaterial
 static var _fade: Gradient
 static var _shrink: Curve
-static var _spark_tex: ImageTexture
+static var _wave_shader: Shader
 
 
 static func tex(path: String) -> Texture2D:
@@ -30,6 +30,10 @@ static func additive() -> CanvasItemMaterial:
 const HALO := "res://assets/fx/halo.png"  # 柔らかい丸い光
 const GLINT := "res://assets/fx/glint.png"  # 十字のきらめき
 const STREAK := "res://assets/fx/streak.png"  # 横に伸びる細い光
+const TRACE := "res://assets/fx/trace.png"  # 縦に伸びる光の筋（火花）
+const RING := "res://assets/fx/ring.png"  # 柔らかい輪（衝撃波の光と、画面の歪みの形）
+const SCORCH := "res://assets/fx/scorch.png"  # 放射状に飛び散る光（爆発の芯）
+const LIGHT := "res://assets/fx/light.png"  # 大きく柔らかい光（惑星の破壊の閃光）
 
 
 ## 光の画像を一瞬だけ置いて、広げながら消す。size は直径（ワールドの単位）。
@@ -99,18 +103,6 @@ static func _shrink_curve() -> Curve:
 	return _shrink
 
 
-## 火花の光の筋（幅2・長さ10、進む向きの先が明るい）。進む向きに伸ばして描く
-static func _streak_tex() -> ImageTexture:
-	if _spark_tex == null:
-		var img := Image.create(2, 10, false, Image.FORMAT_RGBA8)
-		for y in 10:
-			var a := pow(float(y + 1) / 10.0, 1.6)
-			for x in 2:
-				img.set_pixel(x, y, Color(1, 1, 1, a))
-		_spark_tex = ImageTexture.create_from_image(img)
-	return _spark_tex
-
-
 static func _particles(pos: Vector2, col: Color, amount: int, life: float, add: bool) -> CPUParticles2D:
 	var p := CPUParticles2D.new()
 	p.position = pos
@@ -157,66 +149,57 @@ static func burst(parent: Node, pos: Vector2, col: Color, amount: int = 24, spee
 static func sparks(parent: Node, pos: Vector2, col: Color, amount: int = 10, speed: float = 120.0) -> void:
 	speed *= _k() * 1.3
 	var p := _particles(pos, col, amount, 0.38, true)
-	p.texture = _streak_tex()
+	p.texture = tex(TRACE)
 	p.particle_flag_align_y = true
 	p.initial_velocity_min = speed * 0.45
 	p.initial_velocity_max = speed
 	p.damping_min = speed * 0.6
 	p.damping_max = speed * 1.0
-	# 筋の長さが画面の 8〜16px になるように（画像の長さは10）
-	p.scale_amount_min = px(8.0) / 10.0
-	p.scale_amount_max = px(16.0) / 10.0
+	# 筋の長さが画面の 10〜20px になるように（画像の長さは128）
+	p.scale_amount_min = px(10.0) / 128.0
+	p.scale_amount_max = px(20.0) / 128.0
 	_emit(parent, p)
 
 
-## 砕けた瞬間の白い閃き：マスの大きさの白い四角が一瞬光り、細い枠が外へ広がって消える（約0.15秒）
+## 砕けた瞬間の閃き：横に走る光と小さな柔らかい輪が一瞬だけ出る（約0.2秒）
 static func pop(parent: Node, pos: Vector2, col: Color, size: float) -> void:
-	var n := Node2D.new()
-	n.position = pos
-	n.material = additive()
-	n.z_index = 5
-	var w := px(1.0)
-	n.set_meta("k", 0.0)
-	n.draw.connect(func():
-		var k: float = n.get_meta("k")
-		var h := size * 0.5 * (1.0 - 0.35 * k)
-		if k < 0.5:
-			var a := 1.0 - k / 0.5
-			n.draw_rect(Rect2(-h, -h, h * 2.0, h * 2.0), Color(1, 1, 1, 0.55 * a))
-		var r := size * 0.5 * (1.0 + 0.9 * ease(k, 0.4))
-		n.draw_rect(Rect2(-r, -r, r * 2.0, r * 2.0), Color(col, 0.8 * (1.0 - k)), false, w))
-	parent.add_child(n)
-	var t := n.create_tween()
-	t.tween_method(func(k: float):
-		n.set_meta("k", k)
-		n.queue_redraw(), 0.0, 1.0, 0.16)
-	t.tween_callback(n.queue_free)
+	_light(parent, STREAK, pos, Color.WHITE.lerp(col, 0.3), size * 2.6, 0.7, 0.16, 1.3)
+	_light(parent, RING, pos, col, size * 1.2, 0.6, 0.2, 2.0)
 
 
-## 爆発の芯：白く熱い円が一瞬で縮みながら色に冷めていく（数フレームの「衝撃の瞬間」）
-static func core(parent: Node, pos: Vector2, col: Color, radius: float, dur: float = 0.14) -> void:
-	var n := Node2D.new()
-	n.position = pos
-	n.material = additive()
-	n.z_index = 6
-	n.set_meta("k", 0.0)
-	n.draw.connect(func():
-		var k: float = n.get_meta("k")
-		var r := radius * (1.0 - 0.6 * k)
-		n.draw_circle(Vector2.ZERO, r, Color(col, 0.35 * (1.0 - k)))
-		n.draw_circle(Vector2.ZERO, r * 0.55, Color(Color.WHITE.lerp(col, k), 0.9 * (1.0 - k))))
-	parent.add_child(n)
-	var t := n.create_tween()
-	t.tween_method(func(k: float):
-		n.set_meta("k", k)
-		n.queue_redraw(), 0.0, 1.0, dur)
-	t.tween_callback(n.queue_free)
+## 爆発の芯：白く熱い光と放射状の光が一瞬で広がって消える
+static func core(parent: Node, pos: Vector2, col: Color, radius: float, dur: float = 0.18) -> void:
+	_light(parent, HALO, pos, Color.WHITE.lerp(col, 0.3), radius * 1.6, 0.9, dur, 0.6)
+	_light(parent, SCORCH, pos, col, radius * 2.6, 0.8, dur * 1.4, 1.5, 0.4)
 
 
-## 画面の衝撃波（歪み）。strength は 0〜1 くらい
-static func shockwave(pos: Vector2, radius: float, strength: float = 0.6, dur: float = 0.5) -> void:
-	if impact != null and is_instance_valid(impact):
-		impact.wave(pos, radius, strength, dur)
+## 大きな閃光（惑星の破壊）：大きく柔らかい光が広がって消える
+static func big_flash(parent: Node, pos: Vector2, col: Color, radius: float, dur: float = 0.5) -> void:
+	_light(parent, LIGHT, pos, col, radius * 2.0, 0.3, dur, 1.6, 0.3)
+
+
+## 画面の衝撃波（歪み）：柔らかい輪の画像の形で、その下の画面を外へ押し出しながら広がる。
+## GDQuest「Godot Shaders」の shockwave（輪の形のマスクで画面をずらす）を、画面テクスチャを読む形に直したもの。
+## 輪の形の所だけ描くので、画面全体を処理するより軽い。strength は 0〜1 くらい。
+static func shockwave(parent: Node, pos: Vector2, radius: float, strength: float = 0.6, dur: float = 0.5) -> void:
+	if _wave_shader == null:
+		_wave_shader = load("res://shaders/shockwave.gdshader")
+	var t: Texture2D = tex(RING)
+	var s := Sprite2D.new()
+	s.texture = t
+	var m := ShaderMaterial.new()
+	m.shader = _wave_shader
+	m.set_shader_parameter("displacement_amount", 0.03 * strength)
+	s.material = m
+	s.position = pos
+	s.z_index = 3
+	var k := radius * 2.0 / float(t.get_width())
+	s.scale = Vector2(k, k) * 0.2
+	parent.add_child(s)
+	var tw := s.create_tween().set_parallel(true)
+	tw.tween_property(s, "scale", Vector2(k, k), dur).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_method(func(v: float): m.set_shader_parameter("displacement_amount", v), 0.03 * strength, 0.0, dur).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	tw.chain().tween_callback(s.queue_free)
 
 
 ## 光の広がり：細い四角の枠が広がって消える。下に柔らかい光と十字のきらめきを添える。
@@ -267,6 +250,8 @@ static func ring(parent: Node, pos: Vector2, col: Color, radius: float, dur: flo
 		var th := w * (1.0 + 2.0 * (1.0 - k))
 		Neon.glow_poly(n, pts, c, th, th * 3.5))
 	parent.add_child(n)
+	# 線の下に、柔らかい輪の光を一緒に広げる
+	_light(parent, RING, pos, col, radius * 1.1, 0.35, dur, 1.8)
 	var t := n.create_tween()
 	t.tween_method(func(k: float):
 		n.set_meta("k", k)
@@ -284,7 +269,7 @@ static func explosion(parent: Node, pos: Vector2, radius: float, sonic: bool = f
 	sparks(parent, pos, col.lightened(0.2), 18, radius * 3.0)
 	halo(parent, pos, col, radius * 0.9, 0.5, 0.35)
 	streak(parent, pos, col.lightened(0.3), radius * 3.0, 0.4)
-	shockwave(pos, radius * 1.6, 0.35 if sonic else 0.5, 0.45)
+	shockwave(parent, pos, radius * 1.6, 0.35 if sonic else 0.5, 0.45)
 
 
 ## 数値ポップ：等幅の文字が、小さく出て一瞬大きく弾み（オーバーシュート）、上がりながら消える（約0.8秒）

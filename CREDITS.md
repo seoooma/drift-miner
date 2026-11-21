@@ -27,7 +27,27 @@ Interface Sounds・Digital Audio・Sci-Fi Sounds は OpenGameArt.org で Kenney 
 | --- | --- | --- |
 | 光の広がり・爆発の下に敷く柔らかい光 | `halo.png` | `circle_05` |
 | 鉱石・遺物のきらめき、背景の星のきらめき | `glint.png` | `star_07` |
-| 爆発で横に走る細い光 | `streak.png` | `flare_01` |
+| 爆発で横に走る細い光、砕けた瞬間の閃き | `streak.png` | `flare_01` |
+| 火花の光の筋（進む向きに伸ばす） | `trace.png` | `trace_01`（中央を切り出し） |
+| 衝撃波の柔らかい輪、画面の歪みの形 | `ring.png` | `circle_04` |
+| 爆発の芯の放射状の光 | `scorch.png` | `scorch_02` |
+| 惑星を破壊したときの大きな閃光 | `light.png` | `light_01` |
+
+## シェーダー（GDQuest「Godot Shaders」/ MIT License）
+
+`shaders/shockwave.gdshader` は [gdquest-demos/godot-shaders](https://github.com/gdquest-demos/godot-shaders) の `godot/Shaders/shockwave.gdshader` を元に、画面テクスチャを読んで輪の中心から外へずらす形に直したものです。
+
+```
+MIT License
+
+Copyright (c) 2020-present GDQuest
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
 
 ## 音楽
 

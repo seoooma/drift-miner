@@ -331,7 +331,7 @@ func _fit_camera(delta: float) -> void:
 	camera.position = goal if camera.position == Vector2.ZERO or direct else camera.position.lerp(goal, clampf(delta * 3.0, 0.0, 1.0))
 	# 画面の揺れ：なめらかなノイズで、強さの2乗だけ動かす（小さな揺れは控えめ、大きな揺れははっきり）。
 	# ほんの少しだけ傾けもする。毎フレームの乱数より、目が疲れにくく今風の揺れになる。
-	_ensure_impact()
+	_ensure_shake()
 	_shake = maxf(0.0, _shake - delta * 1.6)
 	_shake_t += delta
 	var amt := _shake * _shake
@@ -356,16 +356,14 @@ func punch(amount: float) -> void:
 	_punch = maxf(_punch, amount)
 
 
-## 衝撃の画面効果のノード（惑星と演出の上、HUD の下）を用意する
-func _ensure_impact() -> void:
-	if Fx.impact != null and is_instance_valid(Fx.impact):
+## 揺れに使うなめらかなノイズ（Godot 標準の FastNoiseLite）を用意する
+func _ensure_shake() -> void:
+	if _shake_noise != null:
 		return
 	camera.ignore_rotation = false
 	_shake_noise = FastNoiseLite.new()
 	_shake_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_shake_noise.frequency = 0.05
-	Fx.impact = ImpactFx.new()
-	add_child(Fx.impact)
 
 
 func _auto_buy() -> bool:
@@ -459,9 +457,7 @@ func _relic_fx(pos: Vector2) -> void:
 func _big_hit(pos: Vector2, col: Color, stop: float) -> void:
 	ScreenFx.hitstop(stop)
 	Fx.core(fx_layer, pos, col, Planet.CELL * 1.6, 0.2)
-	Fx.shockwave(pos, Planet.CELL * 10.0, 0.8, 0.55)
-	if Fx.impact != null:
-		Fx.impact.aberrate(0.35)
+	Fx.shockwave(fx_layer, pos, Planet.CELL * 10.0, 0.8, 0.55)
 	punch(0.035)
 	shake(3.0)
 
@@ -503,13 +499,11 @@ func _on_cleared() -> void:
 	Fx.popup(fx_layer, focus, "星系 %d を制覇！" % gs.galaxy() if galaxy_done else "惑星を破壊！", Neon.YELLOW, 18)
 	Audio.play("clear")
 	shake(12.0)
-	# とどめの一撃：一瞬止めて、白く光り、色がずれ、大きな衝撃波が画面を走る
+	# とどめの一撃：一瞬止めて、白く光り、大きな衝撃波が画面を走る
 	ScreenFx.hitstop(0.14)
 	Fx.core(fx_layer, focus, Neon.YELLOW, Planet.CELL * 5.0, 0.3)
-	Fx.shockwave(focus, Planet.CELL * 30.0, 1.0, 0.9)
-	if Fx.impact != null:
-		Fx.impact.flash(Color(1.0, 0.95, 0.8), 0.5, 0.45)
-		Fx.impact.aberrate(0.7)
+	Fx.shockwave(fx_layer, focus, Planet.CELL * 30.0, 1.0, 0.9)
+	Fx.big_flash(fx_layer, focus, Color(1.0, 0.95, 0.8), Planet.CELL * 9.0, 0.45)
 	punch(0.08)
 	# 全体まで引いて、残った塊が外へ飛び散る
 	_outro = 0.0
@@ -550,9 +544,7 @@ func _shatter() -> void:
 		Fx.burst(fx_layer, planet.cell_center(i), col, 3, 260.0 + 200.0 * planet.depth[i])
 	Fx.ring(fx_layer, planet.position, Neon.LINE, planet.world_radius() * 1.6, 1.0)
 	Fx.flash(fx_layer, planet.position, Neon.YELLOW, planet.world_radius() * 0.6, 0.8)
-	Fx.shockwave(planet.position, planet.world_radius() * 1.4, 1.0, 1.1)
-	if Fx.impact != null:
-		Fx.impact.aberrate(0.8)
+	Fx.shockwave(fx_layer, planet.position, planet.world_radius() * 1.4, 1.0, 1.1)
 	Audio.play("blast")
 	shake(10.0)
 
